@@ -5,3 +5,6 @@ sqlalchemy>=2.0.35
 geoalchemy2>=0.15.2
 psycopg2-binary>=2.9.9
 python-multipart>=0.0.12
+osmnx>=1.9.0
+networkx>=3.0
+requests>=2.31.0

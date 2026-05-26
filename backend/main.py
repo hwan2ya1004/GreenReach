@@ -1,7 +1,7 @@
 """
-GreenReach Backend API v0.3.0
+GreenReach Backend API v0.4.0
 위치정보 기반 도시 녹지 접근성 시민 플랫폼
-PostgreSQL + PostGIS 공간 분석 기반
+PostgreSQL + PostGIS 공간 분석 + OSM 보행 네트워크 + 경사도 반영
 """
 import json
 import math
@@ -9,12 +9,13 @@ import os
 from contextlib import asynccontextmanager
 from typing import Optional
 
-from fastapi import FastAPI, Query, Depends
+from fastapi import FastAPI, Query, Depends, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 
 from .database import engine, Base, get_db, DATABASE_URL
+from .osm_walker import calc_walking_route, calc_accessibility_score_osm
 
 # ─── 앱 초기화 ────────────────────────────────────────────────────────────────
 
@@ -473,6 +474,111 @@ def get_park_types(db: Session = Depends(get_db)):
     for p in parks:
         types[p["type"]] = types.get(p["type"], 0) + 1
     return {"db": "csv_fallback", "types": sorted(types.items(), key=lambda x: x[1], reverse=True)}
+
+
+@app.get("/api/route")
+def get_route(
+    origin_lat: float = Query(..., description="출발지 위도"),
+    origin_lng: float = Query(..., description="출발지 경도"),
+    dest_lat: float = Query(..., description="목적지 위도"),
+    dest_lng: float = Query(..., description="목적지 경도"),
+):
+    """
+    OSM 보행 네트워크 기반 실제 도보 경로 계산 (경사도 반영)
+    - 실제 도로/보행로 기반 경로
+    - 경사도 패널티 반영 (5%/10%/15% 기준)
+    - 경로 좌표 반환 (지도 시각화용)
+    """
+    if not (33.0 <= origin_lat <= 38.9 and 124.0 <= origin_lng <= 132.0):
+        return {"error": "대한민국 범위를 벗어난 좌표입니다"}
+    if not (33.0 <= dest_lat <= 38.9 and 124.0 <= dest_lng <= 132.0):
+        return {"error": "목적지가 대한민국 범위를 벗어났습니다"}
+
+    result = calc_walking_route(origin_lat, origin_lng, dest_lat, dest_lng)
+    result["origin"] = {"lat": origin_lat, "lng": origin_lng}
+    result["destination"] = {"lat": dest_lat, "lng": dest_lng}
+    return result
+
+
+@app.get("/api/accessibility/osm")
+def get_accessibility_osm(
+    lat: float = Query(...),
+    lng: float = Query(...),
+    db: Session = Depends(get_db),
+):
+    """
+    OSM 보행 네트워크 + 경사도 반영 녹지 접근성 점수
+    - 실제 도보 경로 기반 (직선거리 × 1.3 아님)
+    - 경사도 패널티 반영 (언덕 지역 불이익)
+    - 경로 좌표 포함 (지도 시각화)
+    """
+    if not (33.0 <= lat <= 38.9 and 124.0 <= lng <= 132.0):
+        return {"error": "대한민국 범위를 벗어난 좌표입니다", "score": 0, "grade": "F"}
+
+    # 1. PostGIS로 가장 가까운 공원 찾기
+    nearest_park = None
+    count_500 = 0
+    count_1km = 0
+
+    if USE_DB:
+        try:
+            nearest_row = db.execute(text("""
+                SELECT *,
+                    ST_Distance(
+                        geom::geography,
+                        ST_SetSRID(ST_MakePoint(:lng, :lat), 4326)::geography
+                    ) AS straight_distance
+                FROM parks
+                ORDER BY geom <-> ST_SetSRID(ST_MakePoint(:lng, :lat), 4326)
+                LIMIT 1
+            """), {"lat": lat, "lng": lng}).fetchone()
+
+            if nearest_row:
+                nearest_park = row_to_park(nearest_row)
+
+            counts = db.execute(text("""
+                SELECT
+                    COUNT(*) FILTER (WHERE ST_DWithin(
+                        geom::geography,
+                        ST_SetSRID(ST_MakePoint(:lng, :lat), 4326)::geography, 500
+                    )) AS count_500,
+                    COUNT(*) FILTER (WHERE ST_DWithin(
+                        geom::geography,
+                        ST_SetSRID(ST_MakePoint(:lng, :lat), 4326)::geography, 1000
+                    )) AS count_1km
+                FROM parks
+            """), {"lat": lat, "lng": lng}).fetchone()
+
+            count_500 = int(counts.count_500)
+            count_1km = int(counts.count_1km)
+
+        except Exception as e:
+            print(f"[DB 오류] accessibility/osm: {e}")
+
+    if nearest_park is None:
+        # CSV 폴백
+        all_parks = load_csv_fallback()
+        if not all_parks:
+            return {"error": "공원 데이터 없음", "score": 0, "grade": "F"}
+        distances = sorted(
+            [(haversine(lat, lng, p["lat"], p["lng"]), p) for p in all_parks],
+            key=lambda x: x[0]
+        )
+        nearest_park = distances[0][1]
+        count_500 = sum(1 for d, _ in distances if d <= 500)
+        count_1km = sum(1 for d, _ in distances if d <= 1000)
+
+    # 2. OSM 보행 경로 계산 (경사도 반영)
+    route_result = calc_walking_route(
+        lat, lng,
+        nearest_park["lat"], nearest_park["lng"],
+    )
+
+    # 3. 접근성 점수 계산
+    result = calc_accessibility_score_osm(route_result, nearest_park, count_500, count_1km)
+    result["data_source"] = "공공데이터포털 전국도시공원정보표준데이터 + OSM 보행 네트워크"
+    result["db"] = "postgis+osm" if USE_DB else "csv+osm"
+    return result
 
 
 if __name__ == "__main__":

@@ -40,12 +40,19 @@ interface AccessibilityResult {
   nearestPark: Park;
   walkingDistance: number;
   walkingTime: number;
+  slopeAdjustedTime?: number;
+  slopePenalty?: number;
+  elevationGain?: number;
+  elevationLoss?: number;
+  routeCoords?: [number, number][];
+  routeMethod?: string;
   parkCount500m: number;
   parkCount1km: number;
   distScore: number;
   densityScore: number;
   areaScore: number;
   data_source?: string;
+  db?: string;
   error?: string;
 }
 
@@ -390,6 +397,40 @@ export default function MapView() {
                 <div className="font-semibold text-sm text-blue-700">{score.parkCount1km}개</div>
               </div>
             </div>
+
+            {/* 경사도 정보 (OSM 분석 결과) */}
+            {score.slopePenalty !== undefined && score.slopePenalty > 1.0 && (
+              <div className="bg-orange-50 border border-orange-200 rounded-xl p-3 mb-3">
+                <div className="text-xs font-semibold text-orange-700 mb-1.5 flex items-center gap-1">
+                  ⛰️ 경사도 분석 결과
+                </div>
+                <div className="grid grid-cols-2 gap-2 text-xs">
+                  <div>
+                    <span className="text-gray-500">경사 패널티</span>
+                    <div className="font-semibold text-orange-700">×{score.slopePenalty.toFixed(1)}</div>
+                  </div>
+                  <div>
+                    <span className="text-gray-500">경사 반영 시간</span>
+                    <div className="font-semibold text-orange-700">{score.slopeAdjustedTime}분</div>
+                  </div>
+                  {(score.elevationGain ?? 0) > 0 && (
+                    <div>
+                      <span className="text-gray-500">오르막</span>
+                      <div className="font-semibold text-red-600">↑{score.elevationGain}m</div>
+                    </div>
+                  )}
+                  {(score.elevationLoss ?? 0) > 0 && (
+                    <div>
+                      <span className="text-gray-500">내리막</span>
+                      <div className="font-semibold text-blue-600">↓{score.elevationLoss}m</div>
+                    </div>
+                  )}
+                </div>
+                <div className="text-xs text-orange-600 mt-1.5">
+                  ⚠️ 언덕이 있어 실제 보행 시간이 더 걸립니다
+                </div>
+              </div>
+            )}
 
             {/* 경로 버튼 */}
             <button
