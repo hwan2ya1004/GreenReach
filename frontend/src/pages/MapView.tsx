@@ -292,7 +292,8 @@ export default function MapView() {
   };
 
   const scoreColor = score ? getScoreColor(score.score) : '#16a34a';
-  const visibleParks = nearbyParks.filter(p => (p.straightDistance ?? 0) <= 5000);
+  // 목록과 동일한 공원을 지도에도 표시 (불일치 방지)
+  const visibleParks = nearbyParks;
 
   // ─── 공통 패널 내용 ──────────────────────────────────────────────────────
   const PanelContent = () => (
