@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useCallback } from 'react';
 import { MapContainer, TileLayer, Marker, Popup, useMapEvents } from 'react-leaflet';
 import L from 'leaflet';
 import { ArrowLeftRight, TrendingUp, TrendingDown, Minus, MapPin, Loader2, Navigation, RotateCcw } from 'lucide-react';

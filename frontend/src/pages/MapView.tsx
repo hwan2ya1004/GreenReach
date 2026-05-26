@@ -1,7 +1,7 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { MapContainer, TileLayer, Marker, Popup, Circle, Polyline, useMap, useMapEvents } from 'react-leaflet';
 import L from 'leaflet';
-import { MapPin, Navigation, Filter, X, TreePine, Clock, Star, Share2, Copy, Check, Route, Loader2, Database, ChevronUp, ChevronDown, Map } from 'lucide-react';
+import { MapPin, Navigation, Filter, TreePine, Clock, Star, Share2, Copy, Check, Route, Loader2, Database, ChevronUp, ChevronDown, Map } from 'lucide-react';
 import { getScoreColor, getGradeDescription } from '../utils/accessibility';
 import type { RecommendationFilter } from '../types';
 
@@ -137,14 +137,6 @@ async function fetchWalkingRoute(
 const DEFAULT_LAT = 37.5665;
 const DEFAULT_LNG = 126.9780;
 
-// ─── 모바일 하단 패널 높이 단계 ──────────────────────────────────────────────
-type PanelSnap = 'peek' | 'half' | 'full';
-const PANEL_HEIGHTS: Record<PanelSnap, string> = {
-  peek: '120px',   // 점수 카드만 살짝 보임
-  half: '50vh',    // 절반
-  full: '85vh',    // 거의 전체
-};
-
 // ─── 메인 컴포넌트 ────────────────────────────────────────────────────────────
 export default function MapView() {
   const [userLat, setUserLat] = useState(DEFAULT_LAT);
@@ -173,12 +165,8 @@ export default function MapView() {
   const [showShare, setShowShare] = useState(false);
   const [copied, setCopied] = useState(false);
 
-  // 모바일 패널 상태
-  const [panelSnap, setPanelSnap] = useState<PanelSnap>('peek');
+  // 모바일 탭 상태
   const [mobileTab, setMobileTab] = useState<'map' | 'info'>('map');
-  const panelRef = useRef<HTMLDivElement>(null);
-  const dragStartY = useRef<number>(0);
-  const dragStartSnap = useRef<PanelSnap>('peek');
 
   // 백엔드 상태 확인 + 자동 위치 감지
   useEffect(() => {
@@ -224,8 +212,6 @@ export default function MapView() {
         setScore(null);
       } else {
         setScore(scoreData);
-        // 분석 완료 시 모바일 패널 살짝 올리기
-        setPanelSnap('half');
       }
 
       let parks: Park[] = nearbyData.parks || [];
@@ -307,25 +293,6 @@ export default function MapView() {
 
   const scoreColor = score ? getScoreColor(score.score) : '#16a34a';
   const visibleParks = nearbyParks.filter(p => (p.straightDistance ?? 0) <= 5000);
-
-  // ─── 드래그 핸들러 (모바일 패널) ─────────────────────────────────────────
-  const handleDragStart = (e: React.TouchEvent) => {
-    dragStartY.current = e.touches[0].clientY;
-    dragStartSnap.current = panelSnap;
-  };
-
-  const handleDragEnd = (e: React.TouchEvent) => {
-    const deltaY = dragStartY.current - e.changedTouches[0].clientY;
-    if (deltaY > 60) {
-      // 위로 스와이프
-      if (dragStartSnap.current === 'peek') setPanelSnap('half');
-      else if (dragStartSnap.current === 'half') setPanelSnap('full');
-    } else if (deltaY < -60) {
-      // 아래로 스와이프
-      if (dragStartSnap.current === 'full') setPanelSnap('half');
-      else if (dragStartSnap.current === 'half') setPanelSnap('peek');
-    }
-  };
 
   // ─── 공통 패널 내용 ──────────────────────────────────────────────────────
   const PanelContent = () => (

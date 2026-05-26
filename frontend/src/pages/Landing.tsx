@@ -25,8 +25,8 @@ const features = [
 ];
 
 const stats = [
-  { value: '70+', label: '서울 공원 데이터' },
-  { value: '25개', label: '자치구 분석' },
+  { value: '16,999개', label: '전국 공원 데이터' },
+  { value: '전국', label: '지역 분석 범위' },
   { value: '0~100', label: '접근성 점수 체계' },
   { value: '무료', label: '공공데이터 기반' },
 ];
@@ -279,7 +279,7 @@ export default function Landing() {
           <Star className="w-12 h-12 mx-auto mb-4 text-yellow-300" />
           <h2 className="text-3xl font-bold mb-4">지금 바로 내 동네 녹지 점수를 확인하세요</h2>
           <p className="text-green-100 mb-8 text-lg">
-            서울 전역 70개 이상의 공원 데이터로 실제 도보 접근성을 분석합니다
+            전국 16,999개 공원 데이터로 실제 도보 접근성을 분석합니다
           </p>
           <div className="flex flex-col sm:flex-row gap-4 justify-center">
             <Link
