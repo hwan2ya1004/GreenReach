@@ -156,7 +156,71 @@ def add_elevation_to_graph(G):
         return G
 
 
-# ─── 실제 도보 경로 계산 ──────────────────────────────────────────────────────
+# ─── OSRM 공개 API 기반 도보 경로 계산 ──────────────────────────────────────
+
+def _fetch_osrm_route(
+    origin_lat: float, origin_lng: float,
+    dest_lat: float, dest_lng: float,
+) -> dict | None:
+    """
+    OSRM 공개 API로 실제 도보 경로 계산
+    project-osrm.org 무료 공개 API 사용
+    """
+    try:
+        import requests
+        url = (
+            f"https://router.project-osrm.org/route/v1/foot/"
+            f"{origin_lng},{origin_lat};{dest_lng},{dest_lat}"
+            f"?overview=full&geometries=geojson&steps=false"
+        )
+        resp = requests.get(url, timeout=8)
+        if resp.status_code != 200:
+            return None
+        data = resp.json()
+        if data.get("code") != "Ok" or not data.get("routes"):
+            return None
+        route = data["routes"][0]
+        dist_m = route["distance"]
+        duration_s = route["duration"]
+        coords_raw = route["geometry"]["coordinates"]
+        # GeoJSON은 [lng, lat] 순서 → [lat, lng]로 변환
+        route_coords = [[c[1], c[0]] for c in coords_raw]
+        return {
+            "distance_m": int(dist_m),
+            "duration_s": int(duration_s),
+            "route_coords": route_coords,
+        }
+    except Exception as e:
+        print(f"[OSRM] API 호출 실패: {e}")
+        return None
+
+
+def _fetch_elevation_for_route(route_coords: list) -> list[float]:
+    """
+    Open-Elevation API로 경로 노드 고도 조회
+    최대 100개 포인트 샘플링
+    """
+    try:
+        import requests
+        # 경로가 너무 길면 샘플링
+        step = max(1, len(route_coords) // 50)
+        sampled = route_coords[::step]
+        if len(sampled) < 2:
+            return []
+        locations = [{"latitude": c[0], "longitude": c[1]} for c in sampled]
+        resp = requests.post(
+            "https://api.open-elevation.com/api/v1/lookup",
+            json={"locations": locations},
+            timeout=10,
+        )
+        if resp.status_code != 200:
+            return []
+        results = resp.json().get("results", [])
+        return [r.get("elevation", 0) for r in results]
+    except Exception as e:
+        print(f"[Elevation] API 호출 실패: {e}")
+        return []
+
 
 def calc_walking_route(
     origin_lat: float, origin_lng: float,
@@ -164,7 +228,7 @@ def calc_walking_route(
     use_elevation: bool = True,
 ) -> dict:
     """
-    OSM 보행 네트워크 기반 실제 도보 경로 계산
+    OSRM 공개 API 기반 실제 도보 경로 계산 + 경사도 반영
     
     Returns:
         {
@@ -172,87 +236,19 @@ def calc_walking_route(
             "time_min": 예상 소요 시간 (분),
             "slope_penalty": 경사도 패널티 배수,
             "adjusted_time_min": 경사도 반영 시간 (분),
-            "route_coords": [[lat, lng], ...],  # 경로 좌표
+            "route_coords": [[lat, lng], ...],
             "elevation_gain_m": 총 오르막 고도 (미터),
             "elevation_loss_m": 총 내리막 고도 (미터),
-            "method": "osm" | "straight_line",
+            "method": "osrm" | "straight_line",
         }
     """
     straight_dist = haversine(origin_lat, origin_lng, dest_lat, dest_lng)
 
-    try:
-        import osmnx as ox
-        import networkx as nx
+    # 1. OSRM으로 실제 도보 경로 계산
+    osrm_result = _fetch_osrm_route(origin_lat, origin_lng, dest_lat, dest_lng)
 
-        # 두 지점을 포함하는 그래프 로드
-        center_lat = (origin_lat + dest_lat) / 2
-        center_lng = (origin_lng + dest_lng) / 2
-        dist_needed = int(straight_dist * 1.5) + 500  # 여유 있게
-
-        G = get_walk_graph(center_lat, center_lng, max(dist_needed, 1500))
-        if G is None:
-            raise ValueError("그래프 없음")
-
-        # 가장 가까운 노드 찾기
-        orig_node = ox.distance.nearest_nodes(G, origin_lng, origin_lat)
-        dest_node = ox.distance.nearest_nodes(G, dest_lng, dest_lat)
-
-        if orig_node == dest_node:
-            raise ValueError("같은 노드")
-
-        # 최단 경로 계산 (거리 기준)
-        route = nx.shortest_path(G, orig_node, dest_node, weight="length")
-
-        # 경로 거리 계산
-        route_dist = sum(
-            G[route[i]][route[i + 1]][0].get("length", 0)
-            for i in range(len(route) - 1)
-        )
-
-        # 경로 좌표 추출
-        route_coords = [
-            [G.nodes[n]["y"], G.nodes[n]["x"]]
-            for n in route
-        ]
-
-        # 경사도 계산
-        elevation_gain = 0.0
-        elevation_loss = 0.0
-        total_slope_penalty = 1.0
-        has_elevation = "elevation" in G.nodes[orig_node]
-
-        if has_elevation:
-            for i in range(len(route) - 1):
-                n1, n2 = route[i], route[i + 1]
-                e1 = G.nodes[n1].get("elevation", 0)
-                e2 = G.nodes[n2].get("elevation", 0)
-                seg_len = G[n1][n2][0].get("length", 1)
-                elev_diff = e2 - e1
-                if elev_diff > 0:
-                    elevation_gain += elev_diff
-                else:
-                    elevation_loss += abs(elev_diff)
-                penalty = calc_slope_penalty(elev_diff, seg_len)
-                total_slope_penalty = max(total_slope_penalty, penalty)
-
-        # 보행 속도: 평지 67m/분 (4km/h)
-        base_time = max(1, round(route_dist / 67))
-        adjusted_time = max(1, round(route_dist * total_slope_penalty / 67))
-
-        return {
-            "distance_m": int(route_dist),
-            "time_min": base_time,
-            "slope_penalty": round(total_slope_penalty, 2),
-            "adjusted_time_min": adjusted_time,
-            "route_coords": route_coords,
-            "elevation_gain_m": round(elevation_gain, 1),
-            "elevation_loss_m": round(elevation_loss, 1),
-            "method": "osm",
-        }
-
-    except Exception as e:
-        print(f"[OSM] 경로 계산 실패 → 직선거리 폴백: {e}")
-        # 폴백: 직선거리 × 1.3 (기존 방식)
+    if osrm_result is None:
+        # 폴백: 직선거리 × 1.3
         walking_dist = int(straight_dist * 1.3)
         walking_time = max(1, round(walking_dist / 67))
         return {
@@ -260,14 +256,55 @@ def calc_walking_route(
             "time_min": walking_time,
             "slope_penalty": 1.0,
             "adjusted_time_min": walking_time,
-            "route_coords": [
-                [origin_lat, origin_lng],
-                [dest_lat, dest_lng],
-            ],
+            "route_coords": [[origin_lat, origin_lng], [dest_lat, dest_lng]],
             "elevation_gain_m": 0.0,
             "elevation_loss_m": 0.0,
             "method": "straight_line",
         }
+
+    route_dist = osrm_result["distance_m"]
+    route_coords = osrm_result["route_coords"]
+
+    # 2. 경사도 계산 (Open-Elevation API)
+    elevation_gain = 0.0
+    elevation_loss = 0.0
+    total_slope_penalty = 1.0
+
+    if use_elevation and len(route_coords) >= 2:
+        elevations = _fetch_elevation_for_route(route_coords)
+        if len(elevations) >= 2:
+            # 샘플링된 구간 거리 계산
+            step = max(1, len(route_coords) // 50)
+            sampled = route_coords[::step]
+            for i in range(len(elevations) - 1):
+                if i + 1 >= len(sampled):
+                    break
+                seg_dist = haversine(
+                    sampled[i][0], sampled[i][1],
+                    sampled[i + 1][0], sampled[i + 1][1]
+                )
+                elev_diff = elevations[i + 1] - elevations[i]
+                if elev_diff > 0:
+                    elevation_gain += elev_diff
+                else:
+                    elevation_loss += abs(elev_diff)
+                penalty = calc_slope_penalty(elev_diff, max(seg_dist, 1))
+                total_slope_penalty = max(total_slope_penalty, penalty)
+
+    # 3. 보행 속도: 평지 67m/분 (4km/h)
+    base_time = max(1, round(route_dist / 67))
+    adjusted_time = max(1, round(route_dist * total_slope_penalty / 67))
+
+    return {
+        "distance_m": route_dist,
+        "time_min": base_time,
+        "slope_penalty": round(total_slope_penalty, 2),
+        "adjusted_time_min": adjusted_time,
+        "route_coords": route_coords,
+        "elevation_gain_m": round(elevation_gain, 1),
+        "elevation_loss_m": round(elevation_loss, 1),
+        "method": "osrm",
+    }
 
 
 # ─── 접근성 점수 (경사도 반영) ────────────────────────────────────────────────
