@@ -18,48 +18,30 @@ interface DistrictStat {
 
 // ─── 공원 수/면적 기반 접근성 점수 추정 ──────────────────────────────────────
 function estimateScore(stat: DistrictStat, maxCount: number): number {
+  // 공원 수 점수: 최대 50점 (상위 지역 대비 비율)
   const countScore = Math.min(50, Math.round((stat.parkCount / maxCount) * 50));
+  // 총 면적 점수: 최대 30점
   const areaScore = Math.min(30, Math.round(Math.log10(stat.totalArea + 1) * 8));
-  const avgScore = Math.min(20, Math.round(Math.log10(stat.avgArea + 1) * 5));
-  return Math.min(99, countScore + areaScore + avgScore + 10);
+  // 평균 면적 점수: 최대 20점
+  const avgScore = Math.min(20, Math.round(Math.log10((stat.avgArea ?? 0) + 1) * 5));
+  // 기본 보정 없이 합산 (공원 수 적은 지역이 낮은 점수 받도록)
+  return Math.min(99, Math.max(1, countScore + areaScore + avgScore));
 }
 
-// ─── AI 챗봇 응답 ─────────────────────────────────────────────────────────────
-function generateAIResponse(question: string, stats: DistrictStat[]): string {
-  const q = question.toLowerCase();
-  if (!stats.length) return '데이터를 불러오는 중입니다. 잠시 후 다시 질문해주세요.';
-
-  const sorted = [...stats].sort((a, b) => (b.score ?? 0) - (a.score ?? 0));
-
-  if (q.includes('가장') && (q.includes('좋') || q.includes('높') || q.includes('우수'))) {
-    const best = sorted[0];
-    return `전국에서 녹지 접근성이 가장 우수한 지역은 **${best.district}**입니다.\n공원 수 ${best.parkCount}개, 총 녹지 면적 ${(best.totalArea / 10000).toFixed(0)}ha로 녹지 환경이 풍부합니다.`;
+// ─── AI 챗봇 응답 (백엔드 ML API 호출) ──────────────────────────────────────
+async function fetchMLResponse(question: string): Promise<string> {
+  try {
+    const res = await fetch(`${API_BASE}/api/ai/chat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ question }),
+    });
+    if (!res.ok) throw new Error('API 오류');
+    const data = await res.json();
+    return data.answer ?? '응답을 받지 못했습니다.';
+  } catch {
+    return '서버에 연결할 수 없습니다. 백엔드가 실행 중인지 확인해주세요.';
   }
-
-  if (q.includes('가장') && (q.includes('나쁘') || q.includes('낮') || q.includes('취약') || q.includes('최하'))) {
-    const worst = sorted[sorted.length - 1];
-    return `전국에서 녹지 접근성이 가장 취약한 지역은 **${worst.district}**입니다.\n공원 수 ${worst.parkCount}개로 녹지 확충이 필요합니다.`;
-  }
-
-  if (q.includes('평균') || q.includes('전국')) {
-    const totalParks = stats.reduce((s, d) => s + d.parkCount, 0);
-    const totalArea = stats.reduce((s, d) => s + d.totalArea, 0);
-    return `전국 분석 결과:\n• 총 공원 수: ${totalParks.toLocaleString()}개\n• 총 녹지 면적: ${(totalArea / 10000).toFixed(0)}ha\n• 분석 지역 수: ${stats.length}개 구/군\n• 공원 수 1위: ${sorted[0].district} (${sorted[0].parkCount}개)`;
-  }
-
-  if (q.includes('공원') && q.includes('많')) {
-    const top3 = sorted.slice(0, 3);
-    return `공원이 가장 많은 지역 TOP 3:\n${top3.map((d, i) => `${i + 1}. ${d.district}: ${d.parkCount}개`).join('\n')}`;
-  }
-
-  // 특정 지역 검색
-  for (const stat of stats) {
-    if (q.includes(stat.district) || q.includes(stat.district.replace('구', '').replace('군', '').replace('시', ''))) {
-      return `**${stat.district}** 녹지 현황:\n• 공원 수: ${stat.parkCount}개\n• 총 녹지 면적: ${(stat.totalArea / 10000).toFixed(1)}ha\n• 평균 공원 면적: ${(stat.avgArea / 10000).toFixed(2)}ha\n\n${(stat.score ?? 0) >= 70 ? '전반적으로 양호한 녹지 환경입니다.' : (stat.score ?? 0) >= 50 ? '일부 지역 개선이 필요합니다.' : '녹지 접근성 개선이 시급합니다.'}`;
-    }
-  }
-
-  return `죄송합니다, 질문을 이해하지 못했습니다. 다음과 같이 질문해보세요:\n• "전국에서 녹지가 가장 좋은 곳은?"\n• "강남구 현황 알려줘"\n• "공원이 가장 많은 곳은?"\n• "전국 평균 통계"`;
 }
 
 // ─── 메인 컴포넌트 ────────────────────────────────────────────────────────────
@@ -72,11 +54,12 @@ export default function Dashboard() {
     {
       id: '0',
       role: 'assistant',
-      content: '안녕하세요! 그린리치 AI 어시스턴트입니다. 전국 녹지 접근성에 대해 무엇이든 물어보세요.\n\n예: "전국에서 녹지가 가장 좋은 곳은?" 또는 "강남구 현황 알려줘"',
+      content: '안녕하세요! 그린리치 AI 어시스턴트입니다. 전국 녹지 접근성에 대해 무엇이든 물어보세요.\n\n예: "전국에서 녹지가 가장 좋은 곳은?" 또는 "강남구 현황 알려줘"\n\n🤖 scikit-learn ML 모델 (RandomForest + KNN + TF-IDF) 기반으로 분석합니다.',
       timestamp: new Date(),
     },
   ]);
   const [chatInput, setChatInput] = useState('');
+  const [chatLoading, setChatLoading] = useState(false);
 
   // 백엔드 API에서 실제 데이터 로드
   useEffect(() => {
@@ -84,7 +67,10 @@ export default function Dashboard() {
     fetch(`${API_BASE}/api/districts/stats`)
       .then(r => r.json())
       .then(data => {
-        const rawStats: DistrictStat[] = data.districts || [];
+        const rawStats: DistrictStat[] = (data.districts || []).map((d: DistrictStat) => ({
+          ...d,
+          avgArea: d.avgArea ?? (d.parkCount > 0 ? d.totalArea / d.parkCount : 0),
+        }));
         const maxCount = Math.max(...rawStats.map(d => d.parkCount), 1);
         const withScores = rawStats.map(d => ({
           ...d,
@@ -107,22 +93,29 @@ export default function Dashboard() {
   const totalArea = stats.reduce((s, d) => s + d.totalArea, 0);
   const vulnerableCount = stats.filter(d => (d.score ?? 0) < 50).length;
 
-  const handleSendChat = () => {
-    if (!chatInput.trim()) return;
+  const handleSendChat = async () => {
+    if (!chatInput.trim() || chatLoading) return;
+    const question = chatInput.trim();
     const userMsg: ChatMessage = {
       id: Date.now().toString(),
       role: 'user',
-      content: chatInput,
+      content: question,
       timestamp: new Date(),
     };
+    setChatMessages(prev => [...prev, userMsg]);
+    setChatInput('');
+    setChatLoading(true);
+
+    const answer = await fetchMLResponse(question);
+
     const aiMsg: ChatMessage = {
       id: (Date.now() + 1).toString(),
       role: 'assistant',
-      content: generateAIResponse(chatInput, stats),
+      content: answer,
       timestamp: new Date(),
     };
-    setChatMessages(prev => [...prev, userMsg, aiMsg]);
-    setChatInput('');
+    setChatMessages(prev => [...prev, aiMsg]);
+    setChatLoading(false);
   };
 
   const handleDownloadReport = () => {
@@ -350,7 +343,10 @@ export default function Dashboard() {
         <div className="px-6 py-4 border-b border-gray-100 flex items-center gap-2">
           <MessageSquare className="w-5 h-5 text-purple-600" />
           <h2 className="font-bold text-gray-800">AI 녹지 어시스턴트</h2>
-          <span className="text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full ml-auto">실제 DB 연동</span>
+          <div className="ml-auto flex items-center gap-2">
+            <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full">scikit-learn ML</span>
+            <span className="text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full">실제 DB 연동</span>
+          </div>
         </div>
         <div className="h-64 overflow-y-auto p-4 space-y-3 bg-gray-50">
           {chatMessages.map((msg) => (
@@ -364,6 +360,14 @@ export default function Dashboard() {
               </div>
             </div>
           ))}
+          {chatLoading && (
+            <div className="flex justify-start">
+              <div className="bg-white rounded-2xl rounded-bl-sm px-4 py-2.5 shadow-sm border border-gray-100 flex items-center gap-2">
+                <Loader2 className="w-3.5 h-3.5 animate-spin text-purple-500" />
+                <span className="text-xs text-gray-400">ML 모델 분석 중...</span>
+              </div>
+            </div>
+          )}
         </div>
         <div className="p-4 border-t border-gray-100">
           <div className="flex gap-2">
@@ -373,21 +377,31 @@ export default function Dashboard() {
               onChange={(e) => setChatInput(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && handleSendChat()}
               placeholder="예: 전국에서 녹지가 가장 좋은 곳은?"
-              className="flex-1 border border-gray-300 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-green-500"
+              disabled={chatLoading}
+              className="flex-1 border border-gray-300 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-green-500 disabled:opacity-50"
             />
             <button
               onClick={handleSendChat}
-              className="bg-green-600 hover:bg-green-700 text-white p-2.5 rounded-xl transition-colors"
+              disabled={chatLoading}
+              className="bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white p-2.5 rounded-xl transition-colors"
             >
-              <Send className="w-4 h-4" />
+              {chatLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
             </button>
           </div>
           <div className="flex gap-2 mt-2 flex-wrap">
-            {['녹지 가장 좋은 곳?', '취약 지역은?', '공원 가장 많은 곳?', '전국 평균 통계'].map((q) => (
+            {[
+              '녹지 가장 좋은 곳?',
+              '취약 지역은?',
+              '공원 가장 많은 곳?',
+              '전국 평균 통계',
+              'AI 예측 결과 알려줘',
+              '강남구와 비슷한 지역은?',
+            ].map((q) => (
               <button
                 key={q}
                 onClick={() => setChatInput(q)}
-                className="text-xs bg-gray-100 hover:bg-green-100 text-gray-600 hover:text-green-700 px-3 py-1 rounded-full transition-colors"
+                disabled={chatLoading}
+                className="text-xs bg-gray-100 hover:bg-green-100 text-gray-600 hover:text-green-700 px-3 py-1 rounded-full transition-colors disabled:opacity-50"
               >
                 {q}
               </button>

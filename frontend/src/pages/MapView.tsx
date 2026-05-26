@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, memo } from 'react';
 import { MapContainer, TileLayer, Marker, Popup, Circle, Polyline, useMap, useMapEvents } from 'react-leaflet';
 import L from 'leaflet';
 import { MapPin, Navigation, Filter, TreePine, Clock, Star, Share2, Copy, Check, Route, Loader2, Database, ChevronUp, ChevronDown, Map } from 'lucide-react';
@@ -80,28 +80,19 @@ const parkIcon = L.divIcon({
   iconAnchor: [14, 14],
 });
 
-const nearestParkIcon = L.divIcon({
+const selectedParkIcon = L.divIcon({
   html: `<div style="background:#dc2626;width:34px;height:34px;border-radius:50%;border:3px solid white;box-shadow:0 3px 10px rgba(220,38,38,0.5);display:flex;align-items:center;justify-content:center;font-size:16px">🌳</div>`,
   className: '',
   iconSize: [34, 34],
   iconAnchor: [17, 17],
 });
 
-const clickIcon = L.divIcon({
-  html: `<div style="background:#7c3aed;width:20px;height:20px;border-radius:50%;border:3px solid white;box-shadow:0 2px 8px rgba(124,58,237,0.4)"></div>`,
-  className: '',
-  iconSize: [20, 20],
-  iconAnchor: [10, 10],
-});
-
 // ─── 지도 이벤트 컴포넌트 ─────────────────────────────────────────────────────
 function MapClickHandler({ onMapClick, enabled }: { onMapClick: (lat: number, lng: number) => void; enabled: boolean }) {
   useMapEvents({
     click(e) {
-      // 마커/팝업 클릭 시 이벤트가 전파되지 않도록 originalEvent 확인
       if (!enabled) return;
       const target = e.originalEvent.target as HTMLElement;
-      // 마커나 팝업 내부 클릭이면 무시
       if (target.closest('.leaflet-marker-icon') || target.closest('.leaflet-popup')) return;
       onMapClick(e.latlng.lat, e.latlng.lng);
     }
@@ -115,14 +106,14 @@ function MapCenter({ lat, lng }: { lat: number; lng: number }) {
   return null;
 }
 
-// ─── 지도 인스턴스 캡처 ──────────────────────────────────────────────────────
 function MapRefCapture({ mapRef }: { mapRef: React.MutableRefObject<L.Map | null> }) {
   const map = useMap();
   useEffect(() => { mapRef.current = map; }, [map, mapRef]);
   return null;
 }
 
-// ─── OSRM 도보 경로 ───────────────────────────────────────────────────────────
+// ─── OSRM 도보 경로 ──────────────────────────────────────────────────────────
+// Valhalla(valhalla1.openstreetmap.de)는 한국 데이터 미지원 → OSRM 사용
 async function fetchWalkingRoute(
   fromLat: number, fromLng: number,
   toLat: number, toLng: number
@@ -130,7 +121,7 @@ async function fetchWalkingRoute(
   try {
     const url = `https://router.project-osrm.org/route/v1/foot/${fromLng},${fromLat};${toLng},${toLat}?overview=full&geometries=geojson`;
     const res = await fetch(url);
-    if (!res.ok) throw new Error('OSRM 오류');
+    if (!res.ok) throw new Error(`OSRM HTTP ${res.status}`);
     const data = await res.json();
     if (data.code !== 'Ok' || !data.routes?.[0]) throw new Error('경로 없음');
     return data.routes[0].geometry.coordinates.map(
@@ -144,12 +135,142 @@ async function fetchWalkingRoute(
 const DEFAULT_LAT = 37.5665;
 const DEFAULT_LNG = 126.9780;
 
+// ─── 지도 컴포넌트 Props ──────────────────────────────────────────────────────
+interface MapComponentProps {
+  userLat: number;
+  userLng: number;
+  score: AccessibilityResult | null;
+  visibleParks: Park[];
+  selectedParkId: string | null;
+  routeParkId: string | null;
+  routeLoading: boolean;
+  showRoute: boolean;
+  routeCoords: [number, number][];
+  mapRef: React.MutableRefObject<L.Map | null>;
+  onMapClick: (lat: number, lng: number) => void;
+  onSelectPark: (parkId: string) => void;
+  onShowRoute: (park: Park) => void;
+  onCancelRoute: () => void;
+}
+
+// ─── 지도 컴포넌트 (외부 정의 + memo로 불필요한 리마운트 방지) ──────────────
+const MapComponent = memo(({
+  userLat, userLng, score, visibleParks,
+  selectedParkId, routeParkId, routeLoading, showRoute, routeCoords,
+  mapRef, onMapClick, onSelectPark, onShowRoute, onCancelRoute,
+}: MapComponentProps) => (
+  <MapContainer
+    center={[userLat, userLng]}
+    zoom={14}
+    style={{ width: '100%', height: '100%', cursor: 'crosshair' }}
+  >
+    <TileLayer
+      attribution='&copy; <a href="https://www.vworld.kr" target="_blank">VWorld</a>'
+      url={`https://api.vworld.kr/req/wmts/1.0.0/${VWORLD_KEY}/Base/{z}/{y}/{x}.png`}
+      maxZoom={19}
+      tileSize={256}
+    />
+    <MapCenter lat={userLat} lng={userLng} />
+    <MapClickHandler onMapClick={onMapClick} enabled={true} />
+    <MapRefCapture mapRef={mapRef} />
+
+    <Marker position={[userLat, userLng]} icon={userIcon}>
+      <Popup>
+        <div className="text-sm font-semibold">📍 분석 위치</div>
+        <div className="text-xs text-gray-500 mt-1">점수: <strong>{score?.score ?? '-'}점</strong> {score?.grade}등급</div>
+      </Popup>
+    </Marker>
+
+    <Circle center={[userLat, userLng]} radius={500}
+      pathOptions={{ color: '#16a34a', fillColor: '#16a34a', fillOpacity: 0.05, weight: 1.5, dashArray: '5,5' }} />
+    <Circle center={[userLat, userLng]} radius={1000}
+      pathOptions={{ color: '#16a34a', fillColor: '#16a34a', fillOpacity: 0.02, weight: 1, dashArray: '8,8' }} />
+
+    {showRoute && routeCoords.length > 1 && (
+      <Polyline positions={routeCoords}
+        pathOptions={{ color: '#2563eb', weight: 5, opacity: 0.85, lineCap: 'round', lineJoin: 'round' }} />
+    )}
+
+    {visibleParks.map((park) => {
+      const isSelected = selectedParkId === park.id;
+      const isRouteActive = routeParkId === park.id && showRoute;
+      return (
+        <Marker
+          key={park.id}
+          position={[park.lat, park.lng]}
+          icon={isSelected ? selectedParkIcon : parkIcon}
+          ref={(markerInstance) => {
+            if (markerInstance && selectedParkId === park.id) {
+              markerInstance.openPopup();
+            }
+          }}
+          eventHandlers={{
+            click: (e) => {
+              onSelectPark(park.id);
+              e.target.openPopup();
+            },
+          }}
+        >
+          <Popup>
+            <div style={{ minWidth: 200 }}>
+              <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 2 }}>{park.name}</div>
+              {isSelected && <div style={{ fontSize: 11, color: '#dc2626', fontWeight: 600, marginBottom: 2 }}>📍 선택된 공원</div>}
+              <div style={{ fontSize: 11, color: '#6b7280', marginBottom: 2 }}>{park.type} · {park.district}</div>
+              {park.area > 0 && <div style={{ fontSize: 11, color: '#6b7280', marginBottom: 4 }}>면적: {(park.area / 10000).toFixed(1)}ha</div>}
+              {park.walkingDistance && (
+                <div style={{ fontSize: 12, fontWeight: 600, color: '#16a34a', marginBottom: 8 }}>
+                  🚶 도보 {park.walkingTime}분 ({park.walkingDistance}m)
+                </div>
+              )}
+              {/* 액션 버튼 */}
+              <div style={{ display: 'flex', gap: 6, marginTop: 4 }}>
+                <button
+                  style={{
+                    flex: 1, padding: '6px 0', borderRadius: 8, border: 'none', cursor: 'pointer',
+                    background: isRouteActive ? '#2563eb' : '#eff6ff',
+                    color: isRouteActive ? '#fff' : '#1d4ed8',
+                    fontSize: 11, fontWeight: 600,
+                  }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onShowRoute(park);
+                  }}
+                >
+                  {routeLoading && routeParkId === park.id ? '⏳ 계산 중...' : isRouteActive ? '🗺️ 경로 표시 중' : '🗺️ 경로 표시'}
+                </button>
+                <button
+                  style={{
+                    flex: 1, padding: '6px 0', borderRadius: 8, border: 'none',
+                    cursor: isRouteActive ? 'pointer' : 'default',
+                    background: isRouteActive ? '#fee2e2' : '#f3f4f6',
+                    color: isRouteActive ? '#dc2626' : '#9ca3af',
+                    fontSize: 11, fontWeight: 600,
+                    opacity: isRouteActive ? 1 : 0.5,
+                  }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (isRouteActive) onCancelRoute();
+                  }}
+                  disabled={!isRouteActive}
+                >
+                  ❌ 경로 취소
+                </button>
+              </div>
+            </div>
+          </Popup>
+        </Marker>
+      );
+    })}
+  </MapContainer>
+));
+
 // ─── 메인 컴포넌트 ────────────────────────────────────────────────────────────
 export default function MapView() {
   const [userLat, setUserLat] = useState(DEFAULT_LAT);
   const [userLng, setUserLng] = useState(DEFAULT_LNG);
-  const [locationLoading, setLocationLoading] = useState(false);
+  const [locationLoading, setLocationLoading] = useState(true);
   const [locationError, setLocationError] = useState('');
+  const [locationReady, setLocationReady] = useState(false);
 
   const [score, setScore] = useState<AccessibilityResult | null>(null);
   const [nearbyParks, setNearbyParks] = useState<Park[]>([]);
@@ -165,16 +286,16 @@ export default function MapView() {
     maxDistance: 2000,
   });
 
+  const [selectedParkId, setSelectedParkId] = useState<string | null>(null);
+  const [selectedPark, setSelectedPark] = useState<Park | null>(null);
   const [routeCoords, setRouteCoords] = useState<[number, number][]>([]);
   const [routeLoading, setRouteLoading] = useState(false);
   const [showRoute, setShowRoute] = useState(false);
-  const [routeParkId, setRouteParkId] = useState<string | null>(null); // 경로 표시 중인 공원 ID
-  const [clickMode, setClickMode] = useState(false);
+  const [routeParkId, setRouteParkId] = useState<string | null>(null);
   const [showShare, setShowShare] = useState(false);
   const [copied, setCopied] = useState(false);
-  const mapRef = useRef<L.Map | null>(null); // 지도 인스턴스 참조
+  const mapRef = useRef<L.Map | null>(null);
 
-  // 모바일 탭 상태
   const [mobileTab, setMobileTab] = useState<'map' | 'info'>('map');
 
   // 백엔드 상태 확인 + 자동 위치 감지
@@ -184,18 +305,23 @@ export default function MapView() {
       .then(d => setBackendOnline(d.status === 'ok'))
       .catch(() => setBackendOnline(false));
 
-    // 페이지 로드 시 자동 위치 감지
     if (navigator.geolocation) {
       navigator.geolocation.getCurrentPosition(
         (pos) => {
           setUserLat(pos.coords.latitude);
           setUserLng(pos.coords.longitude);
+          setLocationLoading(false);
+          setLocationReady(true);
         },
         () => {
-          // 거부 시 기본값(서울 시청) 유지 - 조용히 실패
+          setLocationLoading(false);
+          setLocationReady(true);
         },
         { timeout: 8000, maximumAge: 60000 }
       );
+    } else {
+      setLocationLoading(false);
+      setLocationReady(true);
     }
   }, []);
 
@@ -204,6 +330,8 @@ export default function MapView() {
     setApiError('');
     setRouteCoords([]);
     setShowRoute(false);
+    setSelectedParkId(null);
+    setSelectedPark(null);
 
     try {
       const [scoreRes, nearbyRes] = await Promise.all([
@@ -239,13 +367,14 @@ export default function MapView() {
   }, [filter.maxDistance, filter.childFriendly, filter.petFriendly, filter.accessible]);
 
   useEffect(() => {
+    if (!locationReady) return;
     analyzeLocation(userLat, userLng);
-  }, [userLat, userLng, analyzeLocation]);
+  }, [userLat, userLng, analyzeLocation, locationReady]);
 
   const getMyLocation = () => {
     setLocationLoading(true);
     setLocationError('');
-    setClickMode(false);
+    setLocationReady(false);
     if (!navigator.geolocation) {
       setLocationError('위치 정보를 지원하지 않습니다.');
       setLocationLoading(false);
@@ -256,22 +385,21 @@ export default function MapView() {
         setUserLat(pos.coords.latitude);
         setUserLng(pos.coords.longitude);
         setLocationLoading(false);
+        setLocationReady(true);
       },
       () => {
         setLocationError('위치를 가져올 수 없습니다. 지도를 클릭하세요.');
         setLocationLoading(false);
-        setClickMode(true);
+        setLocationReady(true);
       }
     );
   };
 
-  const handleMapClick = (lat: number, lng: number) => {
-    if (!clickMode) return;
+  const handleMapClick = useCallback((lat: number, lng: number) => {
     setUserLat(lat);
     setUserLng(lng);
-    setClickMode(false);
     setLocationError('');
-  };
+  }, []);
 
   const handleShowRoute = async () => {
     if (!score?.nearestPark) return;
@@ -284,6 +412,31 @@ export default function MapView() {
     setShowRoute(true);
     setRouteLoading(false);
   };
+
+  // 팝업 내 경로 표시 버튼 핸들러
+  const handleShowRoutePark = useCallback(async (park: Park) => {
+    setRouteCoords([]);
+    setShowRoute(false);
+    setRouteParkId(park.id);
+    setRouteLoading(true);
+    const coords = await fetchWalkingRoute(userLat, userLng, park.lat, park.lng);
+    setRouteCoords(coords);
+    setShowRoute(true);
+    setRouteLoading(false);
+  }, [userLat, userLng]);
+
+  // 팝업 내 경로 취소 핸들러
+  const handleCancelRoute = useCallback(() => {
+    setShowRoute(false);
+    setRouteCoords([]);
+    setRouteParkId(null);
+  }, []);
+
+  const handleSelectPark = useCallback((parkId: string) => {
+    setSelectedParkId(parkId);
+    const park = nearbyParks.find(p => p.id === parkId) ?? null;
+    setSelectedPark(park);
+  }, [nearbyParks]);
 
   const shareText = score
     ? `🌿 우리 동네 녹지 접근성 점수: ${score.score}점 (${score.grade}등급)\n가장 가까운 공원: ${score.nearestPark.name} (도보 ${score.walkingTime}분)\n\n#GreenReach #그린리치 #녹지접근성`
@@ -301,7 +454,6 @@ export default function MapView() {
   };
 
   const scoreColor = score ? getScoreColor(score.score) : '#16a34a';
-  // 목록과 동일한 공원을 지도에도 표시 (불일치 방지)
   const visibleParks = nearbyParks;
 
   // ─── 공통 패널 내용 ──────────────────────────────────────────────────────
@@ -336,17 +488,6 @@ export default function MapView() {
               {locationLoading ? '위치 확인 중...' : apiLoading ? '분석 중...' : 'GPS 위치 분석'}
             </span>
           </button>
-          <button
-            onClick={() => { setClickMode(!clickMode); setLocationError(''); }}
-            className={`flex items-center justify-center gap-1.5 font-semibold py-3 px-3 rounded-xl transition-colors border text-sm flex-shrink-0 ${
-              clickMode
-                ? 'bg-purple-600 text-white border-purple-600'
-                : 'bg-white text-purple-700 border-purple-300 hover:bg-purple-50 active:bg-purple-100'
-            }`}
-          >
-            <MapPin className="w-4 h-4" />
-            <span className="hidden sm:inline">{clickMode ? '클릭하세요!' : '지도 클릭'}</span>
-          </button>
         </div>
         {locationError && <p className="text-xs text-orange-600 text-center">{locationError}</p>}
         {apiError && <p className="text-xs text-red-600 text-center">{apiError}</p>}
@@ -354,6 +495,76 @@ export default function MapView() {
           📍 {userLat.toFixed(4)}, {userLng.toFixed(4)}
         </p>
       </div>
+
+      {/* 선택된 공원 정보 카드 */}
+      {selectedPark && (
+        <div className="mx-4 mt-4 mb-0 bg-red-50 border border-red-200 rounded-xl p-3">
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center gap-1.5 text-xs font-bold text-red-700">
+              <span>📍</span>
+              선택된 공원
+            </div>
+            <button
+              onClick={() => { setSelectedParkId(null); setSelectedPark(null); setShowRoute(false); setRouteCoords([]); }}
+              className="text-xs text-gray-400 hover:text-gray-600 transition-colors"
+            >
+              ✕ 해제
+            </button>
+          </div>
+          <div className="font-bold text-sm text-gray-800 truncate mb-0.5">{selectedPark.name}</div>
+          <div className="text-xs text-gray-500 mb-2">{selectedPark.type} · {selectedPark.district}</div>
+          <div className="grid grid-cols-2 gap-2">
+            <div className="bg-white rounded-lg p-2">
+              <div className="text-xs text-gray-500 mb-0.5">도보 거리</div>
+              <div className="font-semibold text-sm text-red-700">
+                {(selectedPark.walkingDistance ?? 0) >= 1000
+                  ? `${((selectedPark.walkingDistance ?? 0) / 1000).toFixed(1)}km`
+                  : `${selectedPark.walkingDistance ?? 0}m`}
+              </div>
+            </div>
+            <div className="bg-white rounded-lg p-2">
+              <div className="text-xs text-gray-500 mb-0.5">도보 시간</div>
+              <div className="font-semibold text-sm text-red-700">약 {selectedPark.walkingTime ?? 0}분</div>
+            </div>
+            {selectedPark.area > 0 && (
+              <div className="bg-white rounded-lg p-2">
+                <div className="text-xs text-gray-500 mb-0.5">면적</div>
+                <div className="font-semibold text-sm text-gray-700">{(selectedPark.area / 10000).toFixed(1)}ha</div>
+              </div>
+            )}
+            <div className="bg-white rounded-lg p-2">
+              <div className="text-xs text-gray-500 mb-0.5">편의시설</div>
+              <div className="font-semibold text-sm text-gray-700">{selectedPark.facilities.length}개</div>
+            </div>
+          </div>
+          {selectedPark.facilities.length > 0 && (
+            <div className="flex flex-wrap gap-1 mt-2">
+              {selectedPark.facilities.slice(0, 4).map(f => (
+                <span key={f} className="text-xs bg-green-100 text-green-700 px-1.5 py-0.5 rounded">{f}</span>
+              ))}
+              {selectedPark.facilities.length > 4 && (
+                <span className="text-xs text-gray-400">+{selectedPark.facilities.length - 4}개</span>
+              )}
+            </div>
+          )}
+          <button
+            onClick={() => handleShowRoutePark(selectedPark)}
+            disabled={routeLoading}
+            className={`mt-2 w-full flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-semibold transition-colors ${
+              routeParkId === selectedPark.id && showRoute
+                ? 'bg-blue-600 text-white'
+                : 'bg-white text-blue-700 border border-blue-200 hover:bg-blue-50'
+            }`}
+          >
+            {routeLoading && routeParkId === selectedPark.id
+              ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> 경로 계산 중...</>
+              : routeParkId === selectedPark.id && showRoute
+                ? <><Route className="w-3.5 h-3.5" /> 경로 표시 중</>
+                : <><Route className="w-3.5 h-3.5" /> 이 공원까지 경로 보기</>
+            }
+          </button>
+        </div>
+      )}
 
       {/* 접근성 점수 카드 */}
       {score && !score.error && (
@@ -364,7 +575,6 @@ export default function MapView() {
             <span className="text-xs text-gray-400 font-normal ml-auto">공공데이터 기반</span>
           </h2>
 
-          {/* 점수 + 등급 가로 배치 */}
           <div className="flex items-center gap-4 mb-4">
             <div
               className="w-18 h-18 rounded-full flex items-center justify-center flex-shrink-0 shadow-lg"
@@ -554,7 +764,22 @@ export default function MapView() {
               </p>
             ) : (
               nearbyParks.map((park) => (
-                <div key={park.id} className="bg-gray-50 hover:bg-green-50 active:bg-green-100 rounded-lg p-3 cursor-pointer transition-colors border border-transparent hover:border-green-200">
+                <div
+                  key={park.id}
+                  className={`rounded-lg p-3 cursor-pointer transition-colors border ${
+                    selectedParkId === park.id
+                      ? 'bg-red-50 border-red-300'
+                      : 'bg-gray-50 hover:bg-green-50 active:bg-green-100 border-transparent hover:border-green-200'
+                  }`}
+                  onClick={() => {
+                    setSelectedParkId(park.id);
+                    setSelectedPark(park);
+                    if (mapRef.current) {
+                      mapRef.current.flyTo([park.lat, park.lng], 17, { animate: true, duration: 0.8 });
+                    }
+                    setMobileTab('map');
+                  }}
+                >
                   <div className="flex items-start justify-between gap-2">
                     <div className="flex-1 min-w-0">
                       <div className="font-medium text-sm text-gray-800 truncate">{park.name}</div>
@@ -598,101 +823,6 @@ export default function MapView() {
     </>
   );
 
-  // ─── 지도 컴포넌트 ────────────────────────────────────────────────────────
-  const MapComponent = () => (
-    <MapContainer
-      center={[userLat, userLng]}
-      zoom={14}
-      style={{ width: '100%', height: '100%', cursor: clickMode ? 'crosshair' : 'grab' }}
-    >
-      <TileLayer
-        attribution='&copy; <a href="https://www.vworld.kr" target="_blank">VWorld</a>'
-        url={`https://api.vworld.kr/req/wmts/1.0.0/${VWORLD_KEY}/Base/{z}/{y}/{x}.png`}
-        maxZoom={19}
-        tileSize={256}
-      />
-      <MapCenter lat={userLat} lng={userLng} />
-      <MapClickHandler onMapClick={handleMapClick} enabled={clickMode} />
-      <MapRefCapture mapRef={mapRef} />
-
-      <Marker position={[userLat, userLng]} icon={clickMode ? clickIcon : userIcon}>
-        <Popup>
-          <div className="text-sm font-semibold">📍 분석 위치</div>
-          <div className="text-xs text-gray-500 mt-1">점수: <strong>{score?.score ?? '-'}점</strong> {score?.grade}등급</div>
-        </Popup>
-      </Marker>
-
-      <Circle center={[userLat, userLng]} radius={500}
-        pathOptions={{ color: '#16a34a', fillColor: '#16a34a', fillOpacity: 0.05, weight: 1.5, dashArray: '5,5' }} />
-      <Circle center={[userLat, userLng]} radius={1000}
-        pathOptions={{ color: '#16a34a', fillColor: '#16a34a', fillOpacity: 0.02, weight: 1, dashArray: '8,8' }} />
-
-      {showRoute && routeCoords.length > 1 && (
-        <Polyline positions={routeCoords}
-          pathOptions={{ color: '#2563eb', weight: 5, opacity: 0.85, lineCap: 'round', lineJoin: 'round' }} />
-      )}
-
-      {visibleParks.map((park) => {
-        const isNearest = score?.nearestPark?.id === park.id;
-        const isRouteActive = routeParkId === park.id && showRoute;
-        return (
-          <Marker key={park.id} position={[park.lat, park.lng]} icon={isNearest ? nearestParkIcon : parkIcon}>
-            <Popup>
-              <div style={{ minWidth: 200 }}>
-                <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 2 }}>{park.name}</div>
-                {isNearest && <div style={{ fontSize: 11, color: '#dc2626', fontWeight: 600, marginBottom: 2 }}>📍 가장 가까운 공원</div>}
-                <div style={{ fontSize: 11, color: '#6b7280', marginBottom: 2 }}>{park.type} · {park.district}</div>
-                {park.area > 0 && <div style={{ fontSize: 11, color: '#6b7280', marginBottom: 4 }}>면적: {(park.area / 10000).toFixed(1)}ha</div>}
-                {park.walkingDistance && (
-                  <div style={{ fontSize: 12, fontWeight: 600, color: '#16a34a', marginBottom: 8 }}>
-                    🚶 도보 {park.walkingTime}분 ({park.walkingDistance}m)
-                  </div>
-                )}
-                {/* 액션 버튼 */}
-                <div style={{ display: 'flex', gap: 6, marginTop: 4 }}>
-                  <button
-                    style={{
-                      flex: 1, padding: '6px 0', borderRadius: 8, border: 'none', cursor: 'pointer',
-                      background: isRouteActive ? '#2563eb' : '#eff6ff',
-                      color: isRouteActive ? '#fff' : '#1d4ed8',
-                      fontSize: 11, fontWeight: 600,
-                    }}
-                    onClick={async () => {
-                      // 다른 공원 경로 선택 시 기존 경로 초기화
-                      setRouteCoords([]);
-                      setShowRoute(false);
-                      setRouteParkId(park.id);
-                      setRouteLoading(true);
-                      const coords = await fetchWalkingRoute(userLat, userLng, park.lat, park.lng);
-                      setRouteCoords(coords);
-                      setShowRoute(true);
-                      setRouteLoading(false);
-                    }}
-                  >
-                    {routeLoading && routeParkId === park.id ? '⏳ 계산 중...' : isRouteActive ? '🗺️ 경로 표시 중' : '🗺️ 경로 표시'}
-                  </button>
-                  <button
-                    style={{
-                      flex: 1, padding: '6px 0', borderRadius: 8, border: 'none', cursor: 'pointer',
-                      background: '#f0fdf4', color: '#15803d', fontSize: 11, fontWeight: 600,
-                    }}
-                    onClick={() => {
-                      if (mapRef.current) {
-                        mapRef.current.flyTo([park.lat, park.lng], 17, { animate: true, duration: 0.8 });
-                      }
-                    }}
-                  >
-                    🔍 확대
-                  </button>
-                </div>
-              </div>
-            </Popup>
-          </Marker>
-        );
-      })}
-    </MapContainer>
-  );
-
   return (
     <>
       {/* ══════════════════════════════════════════════════════════════════════
@@ -706,19 +836,33 @@ export default function MapView() {
 
         {/* 지도 */}
         <div className="flex-1 relative">
-          {clickMode && (
-            <div className="absolute top-4 left-1/2 -translate-x-1/2 z-[1000] bg-purple-600 text-white text-sm font-semibold px-5 py-2.5 rounded-full shadow-lg flex items-center gap-2">
-              <MapPin className="w-4 h-4" />
-              지도를 클릭하여 분석할 위치를 선택하세요
-            </div>
-          )}
-          <MapComponent />
+          {/* 힌트 배너 */}
+          <div className="absolute top-4 left-1/2 -translate-x-1/2 z-[1000] bg-white/90 backdrop-blur-sm text-gray-700 text-xs font-medium px-4 py-2 rounded-full shadow-md flex items-center gap-1.5 pointer-events-none">
+            <MapPin className="w-3.5 h-3.5 text-green-600" />
+            지도를 클릭하면 해당 위치의 녹지 접근성을 분석합니다
+          </div>
+          <MapComponent
+            userLat={userLat}
+            userLng={userLng}
+            score={score}
+            visibleParks={visibleParks}
+            selectedParkId={selectedParkId}
+            routeParkId={routeParkId}
+            routeLoading={routeLoading}
+            showRoute={showRoute}
+            routeCoords={routeCoords}
+            mapRef={mapRef}
+            onMapClick={handleMapClick}
+            onSelectPark={handleSelectPark}
+            onShowRoute={handleShowRoutePark}
+            onCancelRoute={handleCancelRoute}
+          />
           {/* 범례 */}
           <div className="absolute bottom-4 right-4 bg-white rounded-xl shadow-lg p-3 text-xs space-y-1.5 z-[1000]">
             <div className="font-semibold text-gray-700 mb-1">범례</div>
             <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-green-600 border-2 border-white shadow" /><span className="text-gray-600">내 위치</span></div>
             <div className="flex items-center gap-2"><span>🌳</span><span className="text-gray-600">공원</span></div>
-            <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-red-500 border-2 border-white shadow" /><span className="text-gray-600">가장 가까운 공원</span></div>
+            <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-red-500 border-2 border-white shadow" /><span className="text-gray-600">선택된 공원</span></div>
             <div className="flex items-center gap-2"><div className="w-6 h-1 bg-blue-600 rounded" /><span className="text-gray-600">도보 경로</span></div>
             <div className="flex items-center gap-2"><div className="w-6 h-0.5 border-t-2 border-dashed border-green-600" /><span className="text-gray-600">500m / 1km</span></div>
           </div>
@@ -763,10 +907,11 @@ export default function MapView() {
         {/* 모바일 지도 탭 */}
         {mobileTab === 'map' && (
           <div className="flex-1 relative overflow-hidden">
-            {clickMode && (
-              <div className="absolute top-3 left-1/2 -translate-x-1/2 z-[1000] bg-purple-600 text-white text-xs font-semibold px-4 py-2 rounded-full shadow-lg flex items-center gap-1.5">
-                <MapPin className="w-3.5 h-3.5" />
-                지도를 탭하여 위치 선택
+            {/* 모바일 힌트 배너 */}
+            {!apiLoading && (
+              <div className="absolute top-3 left-3 right-16 z-[1000] bg-white/90 backdrop-blur-sm text-gray-600 text-xs font-medium px-3 py-1.5 rounded-full shadow-md flex items-center gap-1.5 pointer-events-none">
+                <MapPin className="w-3 h-3 text-green-600 flex-shrink-0" />
+                <span className="truncate">지도를 탭하면 해당 위치를 분석합니다</span>
               </div>
             )}
 
@@ -780,14 +925,6 @@ export default function MapView() {
                 {locationLoading || apiLoading
                   ? <Loader2 className="w-5 h-5 text-green-600 animate-spin" />
                   : <Navigation className="w-5 h-5 text-green-600" />}
-              </button>
-              <button
-                onClick={() => { setClickMode(!clickMode); setLocationError(''); }}
-                className={`w-12 h-12 rounded-full shadow-lg flex items-center justify-center border ${
-                  clickMode ? 'bg-purple-600 border-purple-600' : 'bg-white border-gray-200 active:bg-gray-50'
-                }`}
-              >
-                <MapPin className={`w-5 h-5 ${clickMode ? 'text-white' : 'text-purple-600'}`} />
               </button>
               {score && (
                 <button
@@ -805,7 +942,22 @@ export default function MapView() {
             </div>
 
             {/* 지도 */}
-            <MapComponent />
+            <MapComponent
+              userLat={userLat}
+              userLng={userLng}
+              score={score}
+              visibleParks={visibleParks}
+              selectedParkId={selectedParkId}
+              routeParkId={routeParkId}
+              routeLoading={routeLoading}
+              showRoute={showRoute}
+              routeCoords={routeCoords}
+              mapRef={mapRef}
+              onMapClick={handleMapClick}
+              onSelectPark={handleSelectPark}
+              onShowRoute={handleShowRoutePark}
+              onCancelRoute={handleCancelRoute}
+            />
 
             {/* 하단 미니 점수 카드 (지도 위 오버레이) */}
             {score && !apiLoading && (

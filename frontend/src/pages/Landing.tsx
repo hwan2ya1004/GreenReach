@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom';
 import { MapPin, BarChart3, Brain, FileText, ChevronRight, Leaf, Users, Building2, Star } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
 
 const features = [
   {
@@ -25,11 +26,53 @@ const features = [
 ];
 
 const stats = [
-  { value: '16,999개', label: '전국 공원 데이터' },
   { value: '전국', label: '지역 분석 범위' },
   { value: '0~100', label: '접근성 점수 체계' },
   { value: '무료', label: '공공데이터 기반' },
 ];
+
+function CountUp({ target, suffix = '' }: { target: number; suffix?: string }) {
+  const [count, setCount] = useState(0);
+  const ref = useRef<HTMLDivElement>(null);
+  const started = useRef(false);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting && !started.current) {
+          started.current = true;
+          const duration = 1800;
+          const startTime = performance.now();
+
+          const tick = (now: number) => {
+            const elapsed = now - startTime;
+            const progress = Math.min(elapsed / duration, 1);
+            // easeOutExpo
+            const eased = progress === 1 ? 1 : 1 - Math.pow(2, -10 * progress);
+            setCount(Math.floor(eased * target));
+            if (progress < 1) requestAnimationFrame(tick);
+          };
+
+          requestAnimationFrame(tick);
+          observer.disconnect();
+        }
+      },
+      { threshold: 0.3 }
+    );
+
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [target]);
+
+  return (
+    <div ref={ref} className="text-3xl font-bold text-green-700">
+      {count.toLocaleString()}{suffix}
+    </div>
+  );
+}
 
 const comparisons = [
   { item: '대상', lx: '전문가·부동산업자', smap: '서울시 공무원', gr: '전국 일반 시민' },
@@ -88,6 +131,11 @@ export default function Landing() {
       <section className="bg-white border-b border-gray-100">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
           <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
+            {/* 16,999개 카운트업 */}
+            <div className="text-center">
+              <CountUp target={16999} suffix="개" />
+              <div className="text-sm text-gray-500 mt-1">전국 공원 데이터</div>
+            </div>
             {stats.map((s) => (
               <div key={s.label} className="text-center">
                 <div className="text-3xl font-bold text-green-700">{s.value}</div>

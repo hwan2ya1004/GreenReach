@@ -1,7 +1,8 @@
 """
-GreenReach Backend API v0.4.0
+GreenReach Backend API v0.5.0
 위치정보 기반 도시 녹지 접근성 시민 플랫폼
 PostgreSQL + PostGIS 공간 분석 + OSM 보행 네트워크 + 경사도 반영
+scikit-learn ML 기반 AI 녹지 어시스턴트
 """
 import json
 import math
@@ -11,15 +12,56 @@ from typing import Optional
 
 from fastapi import FastAPI, Query, Depends, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 
 from .database import engine, Base, get_db, DATABASE_URL
 from .osm_walker import calc_walking_route, calc_accessibility_score_osm
+from . import ml_model
 
 # ─── 앱 초기화 ────────────────────────────────────────────────────────────────
 
 USE_DB = False  # DB 연결 가능 여부 (시작 시 자동 감지)
+
+
+# ─── ML 모델 캐시 (지역 통계 데이터) ─────────────────────────────────────────
+_ml_districts_cache: list[dict] = []
+
+
+def _get_district_list() -> list[dict]:
+    """ML 모델용 지역 통계 데이터 로드 (캐시 우선)"""
+    global _ml_districts_cache
+    if _ml_districts_cache:
+        return _ml_districts_cache
+
+    parks = load_csv_fallback()
+    stats: dict = {}
+    ADMIN_SUFFIXES = ("광역시", "특별시", "특별자치시", "특별자치도")
+    for p in parks:
+        d = p["district"]
+        if d == "기타" or len(d) < 3:
+            continue
+        if any(c.isdigit() or c == '-' for c in d):
+            continue
+        if not d.endswith(("구", "시", "군")):
+            continue
+        ends_with_admin = any(d.endswith(s) for s in ADMIN_SUFFIXES)
+        has_admin_in_middle = any(keyword in d for keyword in ADMIN_SUFFIXES) and not ends_with_admin
+        if has_admin_in_middle or len(d) > 10:
+            continue
+        if d not in stats:
+            stats[d] = {"district": d, "parkCount": 0, "totalArea": 0.0}
+        stats[d]["parkCount"] += 1
+        stats[d]["totalArea"] += p.get("area", 0)
+
+    result = []
+    for s in stats.values():
+        avg = s["totalArea"] / s["parkCount"] if s["parkCount"] > 0 else 0.0
+        result.append({**s, "avgArea": avg})
+
+    _ml_districts_cache = result
+    return result
 
 
 @asynccontextmanager
@@ -36,6 +78,15 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         USE_DB = False
         print(f"[GreenReach] ⚠️  DB 연결 실패 → CSV 폴백 모드: {e}")
+
+    # ML 모델 초기화 (scikit-learn)
+    try:
+        districts = _get_district_list()
+        result = ml_model.initialize_models(districts)
+        print(f"[GreenReach] 🤖 ML 모델 초기화: {result}")
+    except Exception as e:
+        print(f"[GreenReach] ⚠️  ML 모델 초기화 실패: {e}")
+
     yield
 
 
@@ -460,12 +511,35 @@ def get_district_stats(db: Session = Depends(get_db)):
     stats: dict = {}
     for p in parks:
         d = p["district"]
+        # 이상한 district 이름 필터링
+        if d == "기타" or len(d) < 3:
+            continue
+        if any(c.isdigit() or c == '-' for c in d):
+            continue
+        if not d.endswith(("구", "시", "군")):
+            continue
+        # 주소 파싱 실패로 광역시명+구명이 붙은 경우만 제외 (예: "인천광역시연수구", "대전광역시서구")
+        # 이름이 "광역시", "특별시", "특별자치시", "특별자치도"로 끝나지 않으면서
+        # 이름 중간에 해당 키워드가 포함된 경우 = 파싱 오류
+        ADMIN_SUFFIXES = ("광역시", "특별시", "특별자치시", "특별자치도")
+        ends_with_admin = any(d.endswith(s) for s in ADMIN_SUFFIXES)
+        has_admin_in_middle = any(keyword in d for keyword in ADMIN_SUFFIXES) and not ends_with_admin
+        if has_admin_in_middle:
+            continue
+        # 너무 긴 이름 제외 (세종특별자치시 7자, 정상 이름은 보통 10자 이하)
+        if len(d) > 10:
+            continue
         if d not in stats:
             stats[d] = {"district": d, "parkCount": 0, "totalArea": 0.0}
         stats[d]["parkCount"] += 1
         stats[d]["totalArea"] += p.get("area", 0)
-    return {"total_districts": len(stats), "db": "csv_fallback",
-            "districts": sorted(stats.values(), key=lambda x: x["parkCount"], reverse=True)}
+    result_list = []
+    for s in stats.values():
+        avg = s["totalArea"] / s["parkCount"] if s["parkCount"] > 0 else 0.0
+        result_list.append({**s, "avgArea": avg})
+    return {"total_districts": len(result_list), "db": "csv_fallback",
+            "data_source": "공공데이터포털 전국도시공원정보표준데이터",
+            "districts": sorted(result_list, key=lambda x: x["parkCount"], reverse=True)}
 
 
 @app.get("/api/park-types")
@@ -590,6 +664,113 @@ def get_accessibility_osm(
     result["data_source"] = "공공데이터포털 전국도시공원정보표준데이터 + OSM 보행 네트워크"
     result["db"] = "postgis+osm" if USE_DB else "csv+osm"
     return result
+
+
+# ─── AI / ML 엔드포인트 ──────────────────────────────────────────────────────
+
+class ChatRequest(BaseModel):
+    question: str
+
+
+@app.post("/api/ai/chat")
+def ai_chat(req: ChatRequest):
+    """
+    ML 기반 AI 녹지 어시스턴트 챗봇
+    - TF-IDF + Cosine Similarity 의도 분류
+    - RandomForest 등급 예측 포함
+    - KNN 유사 지역 추천 포함
+    """
+    districts = _get_district_list()
+
+    # ML 모델이 아직 초기화되지 않은 경우 재시도
+    if ml_model._rf_model is None:
+        try:
+            ml_model.initialize_models(districts)
+        except Exception as e:
+            return {"answer": f"AI 모델 초기화 중입니다. 잠시 후 다시 시도해주세요. ({e})",
+                    "intent": "error", "confidence": 0.0}
+
+    result = ml_model.generate_ml_response(req.question, districts)
+    return result
+
+
+@app.get("/api/ai/predict")
+def ai_predict(district: str = Query(..., description="지역명 (예: 강남구)")):
+    """
+    특정 지역 ML 등급 예측
+    - RandomForestClassifier 기반
+    - 취약/보통/우수 확률 반환
+    """
+    districts = _get_district_list()
+    target = next((d for d in districts if d.get("district") == district), None)
+
+    if target is None:
+        return {"error": f"'{district}' 지역을 찾을 수 없습니다.", "available_count": len(districts)}
+
+    if ml_model._rf_model is None:
+        ml_model.initialize_models(districts)
+
+    pred = ml_model.predict_grade(target)
+    return {
+        "district": district,
+        "parkCount": target.get("parkCount"),
+        "totalArea_ha": round(target.get("totalArea", 0) / 10000, 1),
+        "avgArea_ha": round(target.get("avgArea", 0) / 10000, 2),
+        **pred,
+        "model": "RandomForestClassifier (n_estimators=200)",
+    }
+
+
+@app.get("/api/ai/similar")
+def ai_similar(
+    district: str = Query(..., description="기준 지역명 (예: 강남구)"),
+    top_k: int = Query(5, ge=1, le=10, description="추천 지역 수"),
+):
+    """
+    KNN 기반 유사 녹지 환경 지역 추천
+    - 공원 수, 총 면적, 평균 면적 기반 유사도 계산
+    """
+    districts = _get_district_list()
+    target = next((d for d in districts if d.get("district") == district), None)
+
+    if target is None:
+        return {"error": f"'{district}' 지역을 찾을 수 없습니다.", "available_count": len(districts)}
+
+    if ml_model._knn_model is None:
+        ml_model.initialize_models(districts)
+
+    similar = ml_model.find_similar_districts(district, districts, top_k=top_k)
+    return {
+        "target_district": district,
+        "target_stats": {
+            "parkCount": target.get("parkCount"),
+            "totalArea_ha": round(target.get("totalArea", 0) / 10000, 1),
+        },
+        "similar_districts": [
+            {
+                "district": d["district"],
+                "parkCount": d["parkCount"],
+                "totalArea_ha": round(d.get("totalArea", 0) / 10000, 1),
+                "similarity_score": d["similarity_score"],
+            }
+            for d in similar
+        ],
+        "model": "KNearestNeighbors (euclidean)",
+    }
+
+
+@app.get("/api/ai/status")
+def ai_status():
+    """ML 모델 상태 확인"""
+    districts = _get_district_list()
+    return {
+        "rf_model_ready": ml_model._rf_model is not None,
+        "knn_model_ready": ml_model._knn_model is not None,
+        "tfidf_ready": ml_model._tfidf_word is not None and ml_model._tfidf_char is not None,
+        "districts_loaded": len(districts),
+        "models": ["RandomForestClassifier", "KNearestNeighbors", "TF-IDF Vectorizer"],
+        "version": "scikit-learn ML v1.0",
+    }
 
 
 if __name__ == "__main__":

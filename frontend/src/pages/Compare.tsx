@@ -1,7 +1,7 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef } from 'react';
 import { MapContainer, TileLayer, Marker, Popup, useMapEvents } from 'react-leaflet';
 import L from 'leaflet';
-import { ArrowLeftRight, TrendingUp, TrendingDown, Minus, MapPin, Loader2, Navigation, RotateCcw } from 'lucide-react';
+import { ArrowLeftRight, TrendingUp, TrendingDown, Minus, MapPin, Loader2, Navigation, RotateCcw, Search } from 'lucide-react';
 import { getScoreColor } from '../utils/accessibility';
 
 const VWORLD_KEY = '4B826FAE-56F2-32CB-829B-2CD7F7DFF7E7';
@@ -84,6 +84,16 @@ export default function Compare() {
   const [loadingB, setLoadingB] = useState(false);
   const [mapCenter] = useState<[number, number]>([37.5665, 126.9780]);
 
+  // 주소 검색 상태
+  const [addrA, setAddrA] = useState('');
+  const [addrB, setAddrB] = useState('');
+  const [addrLoadingA, setAddrLoadingA] = useState(false);
+  const [addrLoadingB, setAddrLoadingB] = useState(false);
+  const [addrErrorA, setAddrErrorA] = useState('');
+  const [addrErrorB, setAddrErrorB] = useState('');
+  const inputARef = useRef<HTMLInputElement>(null);
+  const inputBRef = useRef<HTMLInputElement>(null);
+
   const fetchScore = useCallback(async (lat: number, lng: number, which: 'A' | 'B') => {
     const setLoading = which === 'A' ? setLoadingA : setLoadingB;
     const setScore = which === 'A' ? setScoreA : setScoreB;
@@ -99,6 +109,51 @@ export default function Compare() {
     }
   }, []);
 
+  // 주소 → 좌표 변환 (Nominatim)
+  const handleAddressSearch = useCallback(async (which: 'A' | 'B') => {
+    const addr = which === 'A' ? addrA : addrB;
+    if (!addr.trim()) return;
+
+    const setAddrLoading = which === 'A' ? setAddrLoadingA : setAddrLoadingB;
+    const setAddrError = which === 'A' ? setAddrErrorA : setAddrErrorB;
+
+    setAddrLoading(true);
+    setAddrError('');
+
+    try {
+      const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(addr)}&format=json&countrycodes=kr&limit=1&accept-language=ko`;
+      const res = await fetch(url, {
+        headers: { 'User-Agent': 'GreenReach/1.0 (greenreach.kr)' }
+      });
+      const data = await res.json();
+
+      if (!data || data.length === 0) {
+        setAddrError('주소를 찾을 수 없습니다. 더 구체적으로 입력해보세요.');
+        return;
+      }
+
+      const { lat, lon, display_name } = data[0];
+      const parsedLat = parseFloat(lat);
+      const parsedLng = parseFloat(lon);
+      // 표시명 축약 (앞 3개 토큰)
+      const shortName = display_name.split(',').slice(0, 3).join(', ').trim();
+
+      if (which === 'A') {
+        setLocA({ lat: parsedLat, lng: parsedLng, label: shortName });
+        fetchScore(parsedLat, parsedLng, 'A');
+        setSelectMode('B');
+      } else {
+        setLocB({ lat: parsedLat, lng: parsedLng, label: shortName });
+        fetchScore(parsedLat, parsedLng, 'B');
+        setSelectMode(null);
+      }
+    } catch {
+      setAddrError('검색 중 오류가 발생했습니다.');
+    } finally {
+      setAddrLoading(false);
+    }
+  }, [addrA, addrB, fetchScore]);
+
   const handleMapClick = (lat: number, lng: number) => {
     if (!selectMode) return;
     const label = selectMode === 'A'
@@ -108,11 +163,11 @@ export default function Compare() {
     if (selectMode === 'A') {
       setLocA({ lat, lng, label });
       fetchScore(lat, lng, 'A');
-      setSelectMode('B'); // A 선택 후 자동으로 B 선택 모드
+      setSelectMode('B');
     } else {
       setLocB({ lat, lng, label });
       fetchScore(lat, lng, 'B');
-      setSelectMode(null); // 둘 다 선택 완료
+      setSelectMode(null);
     }
   };
 
@@ -120,7 +175,7 @@ export default function Compare() {
     if (!navigator.geolocation) return;
     navigator.geolocation.getCurrentPosition((pos) => {
       const { latitude: lat, longitude: lng } = pos.coords;
-      const label = `내 위치 ${which} (${lat.toFixed(4)}, ${lng.toFixed(4)})`;
+      const label = `내 위치 (${lat.toFixed(4)}, ${lng.toFixed(4)})`;
       if (which === 'A') {
         setLocA({ lat, lng, label });
         fetchScore(lat, lng, 'A');
@@ -137,6 +192,10 @@ export default function Compare() {
     setScoreA(null);
     setScoreB(null);
     setSelectMode('A');
+    setAddrA('');
+    setAddrB('');
+    setAddrErrorA('');
+    setAddrErrorB('');
   };
 
   const colorA = scoreA ? getScoreColor(scoreA.score) : '#16a34a';
@@ -158,7 +217,72 @@ export default function Compare() {
       {/* 헤더 */}
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-gray-900 mb-1">동네 녹지 환경 비교</h1>
-        <p className="text-gray-500 text-sm">지도에서 두 위치를 선택하여 실제 녹지 접근성을 비교하세요 (이사 전 동네 비교에 활용)</p>
+        <p className="text-gray-500 text-sm">두 위치의 실제 녹지 접근성을 비교하세요 (이사 전 동네 비교에 활용)</p>
+      </div>
+
+      {/* 주소 입력 영역 */}
+      <div className="mb-4 grid sm:grid-cols-2 gap-3">
+        {/* 위치 A 주소 입력 */}
+        <div className="bg-green-50 border border-green-200 rounded-xl p-3">
+          <div className="flex items-center gap-1.5 mb-2">
+            <div style={{ background: '#16a34a', color: 'white', width: 20, height: 20, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 'bold', flexShrink: 0 }}>A</div>
+            <span className="text-xs font-semibold text-green-800">위치 A 주소 입력</span>
+          </div>
+          <div className="flex gap-1.5">
+            <input
+              ref={inputARef}
+              type="text"
+              value={addrA}
+              onChange={(e) => { setAddrA(e.target.value); setAddrErrorA(''); }}
+              onKeyDown={(e) => e.key === 'Enter' && handleAddressSearch('A')}
+              placeholder="예: 서울시 마포구 합정동"
+              className="flex-1 text-xs px-3 py-2 rounded-lg border border-green-300 bg-white focus:outline-none focus:ring-2 focus:ring-green-400 placeholder-gray-400"
+            />
+            <button
+              onClick={() => handleAddressSearch('A')}
+              disabled={addrLoadingA || !addrA.trim()}
+              className="flex items-center gap-1 px-3 py-2 rounded-lg bg-green-600 hover:bg-green-700 disabled:bg-green-300 text-white text-xs font-semibold transition-colors flex-shrink-0"
+            >
+              {addrLoadingA ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Search className="w-3.5 h-3.5" />}
+              검색
+            </button>
+          </div>
+          {addrErrorA && <p className="text-xs text-red-600 mt-1.5">{addrErrorA}</p>}
+          {locA && !addrErrorA && (
+            <p className="text-xs text-green-700 mt-1.5 truncate">✅ {locA.label}</p>
+          )}
+        </div>
+
+        {/* 위치 B 주소 입력 */}
+        <div className="bg-blue-50 border border-blue-200 rounded-xl p-3">
+          <div className="flex items-center gap-1.5 mb-2">
+            <div style={{ background: '#2563eb', color: 'white', width: 20, height: 20, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 'bold', flexShrink: 0 }}>B</div>
+            <span className="text-xs font-semibold text-blue-800">위치 B 주소 입력</span>
+          </div>
+          <div className="flex gap-1.5">
+            <input
+              ref={inputBRef}
+              type="text"
+              value={addrB}
+              onChange={(e) => { setAddrB(e.target.value); setAddrErrorB(''); }}
+              onKeyDown={(e) => e.key === 'Enter' && handleAddressSearch('B')}
+              placeholder="예: 경기도 성남시 분당구"
+              className="flex-1 text-xs px-3 py-2 rounded-lg border border-blue-300 bg-white focus:outline-none focus:ring-2 focus:ring-blue-400 placeholder-gray-400"
+            />
+            <button
+              onClick={() => handleAddressSearch('B')}
+              disabled={addrLoadingB || !addrB.trim()}
+              className="flex items-center gap-1 px-3 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white text-xs font-semibold transition-colors flex-shrink-0"
+            >
+              {addrLoadingB ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Search className="w-3.5 h-3.5" />}
+              검색
+            </button>
+          </div>
+          {addrErrorB && <p className="text-xs text-red-600 mt-1.5">{addrErrorB}</p>}
+          {locB && !addrErrorB && (
+            <p className="text-xs text-blue-700 mt-1.5 truncate">✅ {locB.label}</p>
+          )}
+        </div>
       </div>
 
       {/* 선택 안내 배너 */}
@@ -170,8 +294,8 @@ export default function Compare() {
         }`}>
           <MapPin className="w-4 h-4 flex-shrink-0" />
           {selectMode === 'A'
-            ? '📍 지도에서 비교할 위치 A를 클릭하세요'
-            : '📍 지도에서 비교할 위치 B를 클릭하세요'}
+            ? '📍 주소를 입력하거나 지도에서 위치 A를 클릭하세요'
+            : '📍 주소를 입력하거나 지도에서 위치 B를 클릭하세요'}
           <button
             onClick={handleReset}
             className="ml-auto flex items-center gap-1 text-xs font-medium opacity-70 hover:opacity-100"
@@ -196,7 +320,9 @@ export default function Compare() {
                 }`}
               >
                 <div className="w-4 h-4 rounded-full bg-current opacity-80 flex items-center justify-center text-white text-xs font-bold" style={{ background: '#16a34a', color: 'white', fontSize: 9 }}>A</div>
-                {locA ? `A: ${locA.lat.toFixed(3)}, ${locA.lng.toFixed(3)}` : '위치 A 선택'}
+                {locA
+                  ? `A: ${locA.label.length > 12 ? locA.label.slice(0, 12) + '…' : locA.label}`
+                  : '위치 A 선택'}
               </button>
               <button
                 onClick={() => setSelectMode('B')}
@@ -207,7 +333,9 @@ export default function Compare() {
                 }`}
               >
                 <div style={{ background: '#2563eb', color: 'white', fontSize: 9, width: 16, height: 16, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold' }}>B</div>
-                {locB ? `B: ${locB.lat.toFixed(3)}, ${locB.lng.toFixed(3)}` : '위치 B 선택'}
+                {locB
+                  ? `B: ${locB.label.length > 12 ? locB.label.slice(0, 12) + '…' : locB.label}`
+                  : '위치 B 선택'}
               </button>
               <button
                 onClick={() => handleGetMyLocation(selectMode ?? 'A')}
@@ -240,7 +368,8 @@ export default function Compare() {
                   <Marker position={[locA.lat, locA.lng]} icon={iconA}>
                     <Popup>
                       <div className="text-sm font-bold text-green-700">📍 위치 A</div>
-                      <div className="text-xs text-gray-500">{locA.lat.toFixed(5)}, {locA.lng.toFixed(5)}</div>
+                      <div className="text-xs text-gray-600 mt-0.5">{locA.label}</div>
+                      <div className="text-xs text-gray-400">{locA.lat.toFixed(5)}, {locA.lng.toFixed(5)}</div>
                       {scoreA && <div className="text-xs font-semibold mt-1" style={{ color: colorA }}>점수: {scoreA.score}점 ({scoreA.grade}등급)</div>}
                     </Popup>
                   </Marker>
@@ -249,7 +378,8 @@ export default function Compare() {
                   <Marker position={[locB.lat, locB.lng]} icon={iconB}>
                     <Popup>
                       <div className="text-sm font-bold text-blue-700">📍 위치 B</div>
-                      <div className="text-xs text-gray-500">{locB.lat.toFixed(5)}, {locB.lng.toFixed(5)}</div>
+                      <div className="text-xs text-gray-600 mt-0.5">{locB.label}</div>
+                      <div className="text-xs text-gray-400">{locB.lat.toFixed(5)}, {locB.lng.toFixed(5)}</div>
                       {scoreB && <div className="text-xs font-semibold mt-1" style={{ color: colorB }}>점수: {scoreB.score}점 ({scoreB.grade}등급)</div>}
                     </Popup>
                   </Marker>
@@ -263,8 +393,8 @@ export default function Compare() {
             <div className="mt-3 bg-gray-50 rounded-xl p-4 text-sm text-gray-600">
               <p className="font-semibold text-gray-700 mb-2">📌 사용 방법</p>
               <ol className="space-y-1 text-xs list-decimal list-inside">
-                <li>지도에서 <strong className="text-green-700">위치 A</strong>를 클릭 (현재 동네)</li>
-                <li>지도에서 <strong className="text-blue-700">위치 B</strong>를 클릭 (이사 예정 동네)</li>
+                <li><strong className="text-green-700">위치 A</strong> 주소 입력 후 검색 (또는 지도 클릭)</li>
+                <li><strong className="text-blue-700">위치 B</strong> 주소 입력 후 검색 (또는 지도 클릭)</li>
                 <li>두 위치의 실제 녹지 접근성 점수를 비교</li>
               </ol>
               <p className="text-xs text-gray-400 mt-2">💡 "내 위치로 설정" 버튼으로 현재 위치를 자동 입력할 수 있습니다</p>
@@ -277,10 +407,13 @@ export default function Compare() {
           {/* 점수 카드 A */}
           <div className={`bg-white rounded-2xl shadow-sm border p-5 ${locA ? 'border-green-200' : 'border-gray-100'}`}>
             <div className="flex items-center gap-2 mb-3">
-              <div style={{ background: '#16a34a', color: 'white', width: 24, height: 24, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 'bold' }}>A</div>
-              <span className="font-bold text-gray-800 text-sm">
-                {locA ? `${locA.lat.toFixed(4)}, ${locA.lng.toFixed(4)}` : '위치 A 미선택'}
-              </span>
+              <div style={{ background: '#16a34a', color: 'white', width: 24, height: 24, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 'bold', flexShrink: 0 }}>A</div>
+              <div className="flex-1 min-w-0">
+                <div className="font-bold text-gray-800 text-sm truncate">
+                  {locA ? locA.label : '위치 A 미선택'}
+                </div>
+                {locA && <div className="text-xs text-gray-400">{locA.lat.toFixed(4)}, {locA.lng.toFixed(4)}</div>}
+              </div>
             </div>
             {loadingA ? (
               <div className="flex items-center gap-2 text-gray-400 py-4 justify-center">
@@ -315,7 +448,7 @@ export default function Compare() {
               </>
             ) : (
               <div className="text-center py-6 text-gray-400 text-sm">
-                {locA ? '분석 실패' : '지도에서 위치 A를 선택하세요'}
+                {locA ? '분석 실패' : '주소를 입력하거나 지도에서 위치 A를 선택하세요'}
               </div>
             )}
           </div>
@@ -332,10 +465,13 @@ export default function Compare() {
           {/* 점수 카드 B */}
           <div className={`bg-white rounded-2xl shadow-sm border p-5 ${locB ? 'border-blue-200' : 'border-gray-100'}`}>
             <div className="flex items-center gap-2 mb-3">
-              <div style={{ background: '#2563eb', color: 'white', width: 24, height: 24, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 'bold' }}>B</div>
-              <span className="font-bold text-gray-800 text-sm">
-                {locB ? `${locB.lat.toFixed(4)}, ${locB.lng.toFixed(4)}` : '위치 B 미선택'}
-              </span>
+              <div style={{ background: '#2563eb', color: 'white', width: 24, height: 24, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 'bold', flexShrink: 0 }}>B</div>
+              <div className="flex-1 min-w-0">
+                <div className="font-bold text-gray-800 text-sm truncate">
+                  {locB ? locB.label : '위치 B 미선택'}
+                </div>
+                {locB && <div className="text-xs text-gray-400">{locB.lat.toFixed(4)}, {locB.lng.toFixed(4)}</div>}
+              </div>
             </div>
             {loadingB ? (
               <div className="flex items-center gap-2 text-gray-400 py-4 justify-center">
@@ -370,7 +506,7 @@ export default function Compare() {
               </>
             ) : (
               <div className="text-center py-6 text-gray-400 text-sm">
-                {locB ? '분석 실패' : '지도에서 위치 B를 선택하세요'}
+                {locB ? '분석 실패' : '주소를 입력하거나 지도에서 위치 B를 선택하세요'}
               </div>
             )}
           </div>
