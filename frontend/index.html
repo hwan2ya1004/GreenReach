@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+    <!-- SEO / 기본 메타 -->
+    <meta name="description" content="내 위치에서 공원까지 실제 도보 거리를 분석하여 녹지 접근성 점수를 제공하는 LBS 기반 시민 플랫폼" />
+    <meta name="keywords" content="공원 접근성, 녹지 점수, 도시 공원, 그린리치, GreenReach, LBS, 위치정보, 서울 공원" />
+    <meta name="author" content="GreenReach" />
+
+    <!-- Open Graph (SNS 공유 시 미리보기) -->
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="GreenReach · 그린리치 — 내 동네 녹지 접근성 점수" />
+    <meta property="og:description" content="내 위치에서 공원까지 실제 도보 거리를 분석하여 녹지 접근성 점수를 제공하는 LBS 기반 시민 플랫폼" />
+    <meta property="og:url" content="https://greenreach.kr" />
+    <meta property="og:image" content="https://greenreach.kr/og-image.png" />
+    <meta property="og:locale" content="ko_KR" />
+
+    <!-- Twitter Card -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="GreenReach · 그린리치" />
+    <meta name="twitter:description" content="내 동네 녹지 접근성 점수를 확인하세요 🌿" />
+
+    <title>GreenReach · 그린리치 | 내 동네 녹지 접근성 점수</title>
+
+    <!-- 폰트 -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+
+    <!-- 마커 펄스 애니메이션 -->
+    <style>
+      @keyframes pulse {
+        0%, 100% { transform: scale(1); opacity: 0.4; }
+        50% { transform: scale(1.5); opacity: 0.1; }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
