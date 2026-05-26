@@ -17,14 +17,19 @@ interface DistrictStat {
 }
 
 // ─── 공원 수/면적 기반 접근성 점수 추정 ──────────────────────────────────────
-function estimateScore(stat: DistrictStat, maxCount: number): number {
-  // 공원 수 점수: 최대 50점 (상위 지역 대비 비율)
-  const countScore = Math.min(50, Math.round((stat.parkCount / maxCount) * 50));
-  // 총 면적 점수: 최대 30점
-  const areaScore = Math.min(30, Math.round(Math.log10(stat.totalArea + 1) * 8));
-  // 평균 면적 점수: 최대 20점
-  const avgScore = Math.min(20, Math.round(Math.log10((stat.avgArea ?? 0) + 1) * 5));
-  // 기본 보정 없이 합산 (공원 수 적은 지역이 낮은 점수 받도록)
+function estimateScore(stat: DistrictStat, maxCount: number, maxArea: number): number {
+  // 공원 수 점수: 최대 60점 (상위 지역 대비 비율) — 가장 중요한 지표
+  const countScore = Math.min(60, Math.round((stat.parkCount / maxCount) * 60));
+  // 총 면적 점수: 최대 25점 (상위 지역 대비 비율)
+  const areaScore = Math.min(25, Math.round((stat.totalArea / maxArea) * 25));
+  // 평균 면적 점수: 최대 15점 (1만㎡ 이상이면 만점)
+  const avgArea = stat.avgArea ?? 0;
+  const avgScore =
+    avgArea >= 100000 ? 15 :
+    avgArea >= 50000  ? 12 :
+    avgArea >= 10000  ? 9  :
+    avgArea >= 3000   ? 6  :
+    avgArea >= 1000   ? 3  : 1;
   return Math.min(99, Math.max(1, countScore + areaScore + avgScore));
 }
 
@@ -72,9 +77,10 @@ export default function Dashboard() {
           avgArea: d.avgArea ?? (d.parkCount > 0 ? d.totalArea / d.parkCount : 0),
         }));
         const maxCount = Math.max(...rawStats.map(d => d.parkCount), 1);
+        const maxArea = Math.max(...rawStats.map(d => d.totalArea), 1);
         const withScores = rawStats.map(d => ({
           ...d,
-          score: estimateScore(d, maxCount),
+          score: estimateScore(d, maxCount, maxArea),
         }));
         setStats(withScores);
         setLoading(false);
