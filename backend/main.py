@@ -491,6 +491,11 @@ def get_district_stats(db: Session = Depends(get_db)):
                     SUM(area) AS total_area,
                     AVG(area) AS avg_area
                 FROM parks
+                WHERE district != '기타'
+                  AND LENGTH(district) >= 3
+                  AND district ~ '^[가-힣]+$'
+                  AND (district LIKE '%구' OR district LIKE '%시' OR district LIKE '%군')
+                  AND district NOT SIMILAR TO '%(광역시|특별시|특별자치시|특별자치도)%구'
                 GROUP BY district
                 ORDER BY park_count DESC
             """)).fetchall()

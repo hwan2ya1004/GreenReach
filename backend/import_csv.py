@@ -46,18 +46,24 @@ def extract_district(address: str) -> str:
     if not address:
         return "기타"
     parts = address.split()
-    # 1순위: "구" (예: 강남구, 분당구)
+    ADMIN_SUFFIXES = ("광역시", "특별시", "특별자치시", "특별자치도")
+
+    # 1순위: "구" (예: 강남구, 분당구) - 순수 한글 구 이름만 (숫자/특수문자 제외)
     for part in parts:
-        if part.endswith("구") and len(part) >= 3:
+        if (part.endswith("구") and len(part) >= 3 and len(part) <= 10
+                and part.isalpha()
+                and not any(part.endswith(s + "구") for s in ("광역시", "특별시", "특별자치시"))):
             return part
-    # 2순위: "시" (예: 화성시, 수원시) - 특별시/광역시 제외
+    # 2순위: "시" (예: 화성시, 수원시) - 특별시/광역시/특별자치시 제외
     for part in parts:
-        if (part.endswith("시") and len(part) >= 3
+        if (part.endswith("시") and len(part) >= 3 and len(part) <= 10
+                and part.isalpha()
                 and part not in ("특별시", "광역시", "특별자치시", "특별자치도")):
             return part
     # 3순위: "군" (예: 양평군, 가평군)
     for part in parts:
-        if part.endswith("군") and len(part) >= 3:
+        if (part.endswith("군") and len(part) >= 3 and len(part) <= 10
+                and part.isalpha()):
             return part
     return "기타"
 
