@@ -87,7 +87,18 @@ def load_csv_fallback() -> list[dict]:
                     if not name:
                         continue
                     address = (row.get("소재지도로명주소") or row.get("소재지지번주소") or "").strip()
-                    district = next((p for p in address.split() if p.endswith("구") and len(p) >= 3), "기타")
+                    parts = address.split()
+                    district = next(
+                        (p for p in parts if p.endswith("구") and len(p) >= 3),
+                        next(
+                            (p for p in parts if p.endswith("시") and len(p) >= 3
+                             and p not in ("특별시", "광역시", "특별자치시", "특별자치도")),
+                            next(
+                                (p for p in parts if p.endswith("군") and len(p) >= 3),
+                                "기타"
+                            )
+                        )
+                    )
                     park_type = PARK_TYPE_MAP.get(row.get("공원구분", "").strip(), "기타")
                     try:
                         area = float(row.get("공원면적", "0").strip() or "0")
