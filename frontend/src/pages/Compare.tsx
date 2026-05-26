@@ -1,233 +1,462 @@
-import { useState } from 'react';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, RadarChart, PolarGrid, PolarAngleAxis, Radar } from 'recharts';
-import { ArrowLeftRight, TrendingUp, TrendingDown, Minus } from 'lucide-react';
-import { DISTRICT_STATS } from '../data/districtStats';
-import { getScoreColor, getScoreBgColor } from '../utils/accessibility';
+import { useState, useEffect, useCallback } from 'react';
+import { MapContainer, TileLayer, Marker, Popup, useMapEvents } from 'react-leaflet';
+import L from 'leaflet';
+import { ArrowLeftRight, TrendingUp, TrendingDown, Minus, MapPin, Loader2, Navigation, RotateCcw } from 'lucide-react';
+import { getScoreColor } from '../utils/accessibility';
 
-const DISTRICTS = DISTRICT_STATS.map((d) => d.district).sort();
+const VWORLD_KEY = '4B826FAE-56F2-32CB-829B-2CD7F7DFF7E7';
+const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
 
+// ─── 타입 ─────────────────────────────────────────────────────────────────────
+interface AccessibilityResult {
+  score: number;
+  grade: string;
+  nearestPark: { name: string; type: string; area: number };
+  walkingDistance: number;
+  walkingTime: number;
+  slopePenalty?: number;
+  slopeAdjustedTime?: number;
+  parkCount500m: number;
+  parkCount1km: number;
+  distScore: number;
+  densityScore: number;
+  areaScore: number;
+  error?: string;
+}
+
+interface LocationPoint {
+  lat: number;
+  lng: number;
+  label: string;
+}
+
+// ─── 지도 클릭 핸들러 ─────────────────────────────────────────────────────────
+function MapClickHandler({
+  onMapClick, enabled
+}: {
+  onMapClick: (lat: number, lng: number) => void;
+  enabled: boolean;
+}) {
+  useMapEvents({
+    click(e) {
+      if (!enabled) return;
+      const target = e.originalEvent.target as HTMLElement;
+      if (target.closest('.leaflet-marker-icon') || target.closest('.leaflet-popup')) return;
+      onMapClick(e.latlng.lat, e.latlng.lng);
+    }
+  });
+  return null;
+}
+
+// ─── 마커 아이콘 ──────────────────────────────────────────────────────────────
+delete (L.Icon.Default.prototype as unknown as Record<string, unknown>)._getIconUrl;
+L.Icon.Default.mergeOptions({
+  iconRetinaUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png',
+  iconUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png',
+  shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
+});
+
+const iconA = L.divIcon({
+  html: `<div style="background:#16a34a;width:32px;height:32px;border-radius:50%;border:3px solid white;box-shadow:0 2px 8px rgba(22,163,74,0.5);display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:bold;color:white">A</div>`,
+  className: '', iconSize: [32, 32], iconAnchor: [16, 16],
+});
+const iconB = L.divIcon({
+  html: `<div style="background:#2563eb;width:32px;height:32px;border-radius:50%;border:3px solid white;box-shadow:0 2px 8px rgba(37,99,235,0.5);display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:bold;color:white">B</div>`,
+  className: '', iconSize: [32, 32], iconAnchor: [16, 16],
+});
+
+// ─── 비교 아이콘 ──────────────────────────────────────────────────────────────
+function CompareIcon({ a, b, higherIsBetter }: { a: number; b: number; higherIsBetter: boolean }) {
+  if (a === b) return <Minus className="w-4 h-4 text-gray-400" />;
+  const aWins = higherIsBetter ? a > b : a < b;
+  if (aWins) return <TrendingUp className="w-4 h-4 text-green-600" />;
+  return <TrendingDown className="w-4 h-4 text-red-500" />;
+}
+
+// ─── 메인 컴포넌트 ────────────────────────────────────────────────────────────
 export default function Compare() {
-  const [districtA, setDistrictA] = useState('강남구');
-  const [districtB, setDistrictB] = useState('금천구');
+  const [selectMode, setSelectMode] = useState<'A' | 'B' | null>('A');
+  const [locA, setLocA] = useState<LocationPoint | null>(null);
+  const [locB, setLocB] = useState<LocationPoint | null>(null);
+  const [scoreA, setScoreA] = useState<AccessibilityResult | null>(null);
+  const [scoreB, setScoreB] = useState<AccessibilityResult | null>(null);
+  const [loadingA, setLoadingA] = useState(false);
+  const [loadingB, setLoadingB] = useState(false);
+  const [mapCenter] = useState<[number, number]>([37.5665, 126.9780]);
 
-  const statA = DISTRICT_STATS.find((d) => d.district === districtA)!;
-  const statB = DISTRICT_STATS.find((d) => d.district === districtB)!;
+  const fetchScore = useCallback(async (lat: number, lng: number, which: 'A' | 'B') => {
+    const setLoading = which === 'A' ? setLoadingA : setLoadingB;
+    const setScore = which === 'A' ? setScoreA : setScoreB;
+    setLoading(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/accessibility/osm?lat=${lat}&lng=${lng}`);
+      const data = await res.json();
+      setScore(data);
+    } catch {
+      setScore(null);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
-  const barData = [
-    { name: '접근성 점수', A: statA.avgScore, B: statB.avgScore, max: 100 },
-    { name: '공원 수', A: statA.parkCount, B: statB.parkCount, max: 15 },
-    { name: '1인당 녹지(㎡)', A: Math.round(statA.greenAreaPerCapita), B: Math.round(statB.greenAreaPerCapita), max: 40 },
-    { name: '취약지역(%)', A: statA.vulnerableRatio, B: statB.vulnerableRatio, max: 50 },
-  ];
+  const handleMapClick = (lat: number, lng: number) => {
+    if (!selectMode) return;
+    const label = selectMode === 'A'
+      ? `위치 A (${lat.toFixed(4)}, ${lng.toFixed(4)})`
+      : `위치 B (${lat.toFixed(4)}, ${lng.toFixed(4)})`;
 
-  const radarData = [
-    { subject: '접근성', A: statA.avgScore, B: statB.avgScore },
-    { subject: '공원밀도', A: Math.min(100, statA.parkCount * 8), B: Math.min(100, statB.parkCount * 8) },
-    { subject: '1인당녹지', A: Math.min(100, statA.greenAreaPerCapita * 2.5), B: Math.min(100, statB.greenAreaPerCapita * 2.5) },
-    { subject: '취약지역↓', A: 100 - statA.vulnerableRatio * 2, B: 100 - statB.vulnerableRatio * 2 },
-    { subject: '인구규모', A: Math.min(100, statA.population / 7000), B: Math.min(100, statB.population / 7000) },
-  ];
+    if (selectMode === 'A') {
+      setLocA({ lat, lng, label });
+      fetchScore(lat, lng, 'A');
+      setSelectMode('B'); // A 선택 후 자동으로 B 선택 모드
+    } else {
+      setLocB({ lat, lng, label });
+      fetchScore(lat, lng, 'B');
+      setSelectMode(null); // 둘 다 선택 완료
+    }
+  };
 
-  const compareItems = [
-    { label: '녹지 접근성 점수', keyA: statA.avgScore, keyB: statB.avgScore, unit: '점', higherIsBetter: true },
-    { label: '공원 수', keyA: statA.parkCount, keyB: statB.parkCount, unit: '개', higherIsBetter: true },
-    { label: '총 녹지 면적', keyA: Math.round(statA.totalArea / 10000), keyB: Math.round(statB.totalArea / 10000), unit: 'ha', higherIsBetter: true },
-    { label: '1인당 녹지 면적', keyA: statA.greenAreaPerCapita, keyB: statB.greenAreaPerCapita, unit: '㎡', higherIsBetter: true },
-    { label: '인구', keyA: Math.round(statA.population / 10000), keyB: Math.round(statB.population / 10000), unit: '만명', higherIsBetter: false },
-    { label: '취약 지역 비율', keyA: statA.vulnerableRatio, keyB: statB.vulnerableRatio, unit: '%', higherIsBetter: false },
-  ];
+  const handleGetMyLocation = (which: 'A' | 'B') => {
+    if (!navigator.geolocation) return;
+    navigator.geolocation.getCurrentPosition((pos) => {
+      const { latitude: lat, longitude: lng } = pos.coords;
+      const label = `내 위치 ${which} (${lat.toFixed(4)}, ${lng.toFixed(4)})`;
+      if (which === 'A') {
+        setLocA({ lat, lng, label });
+        fetchScore(lat, lng, 'A');
+      } else {
+        setLocB({ lat, lng, label });
+        fetchScore(lat, lng, 'B');
+      }
+    });
+  };
 
-  function CompareIcon({ a, b, higherIsBetter }: { a: number; b: number; higherIsBetter: boolean }) {
-    if (a === b) return <Minus className="w-4 h-4 text-gray-400" />;
-    const aWins = higherIsBetter ? a > b : a < b;
-    if (aWins) return <TrendingUp className="w-4 h-4 text-green-600" />;
-    return <TrendingDown className="w-4 h-4 text-red-500" />;
-  }
+  const handleReset = () => {
+    setLocA(null);
+    setLocB(null);
+    setScoreA(null);
+    setScoreB(null);
+    setSelectMode('A');
+  };
+
+  const colorA = scoreA ? getScoreColor(scoreA.score) : '#16a34a';
+  const colorB = scoreB ? getScoreColor(scoreB.score) : '#2563eb';
+
+  const compareItems = scoreA && scoreB ? [
+    { label: '녹지 접근성 점수', a: scoreA.score, b: scoreB.score, unit: '점', higherIsBetter: true },
+    { label: '도보 거리', a: scoreA.walkingDistance, b: scoreB.walkingDistance, unit: 'm', higherIsBetter: false },
+    { label: '도보 시간', a: scoreA.walkingTime, b: scoreB.walkingTime, unit: '분', higherIsBetter: false },
+    { label: '500m 내 공원', a: scoreA.parkCount500m, b: scoreB.parkCount500m, unit: '개', higherIsBetter: true },
+    { label: '1km 내 공원', a: scoreA.parkCount1km, b: scoreB.parkCount1km, unit: '개', higherIsBetter: true },
+    { label: '거리 점수', a: scoreA.distScore, b: scoreB.distScore, unit: '점', higherIsBetter: true },
+    { label: '밀도 점수', a: scoreA.densityScore, b: scoreB.densityScore, unit: '점', higherIsBetter: true },
+    { label: '면적 점수', a: scoreA.areaScore, b: scoreB.areaScore, unit: '점', higherIsBetter: true },
+  ] : [];
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-      <div className="mb-8">
-        <h1 className="text-2xl font-bold text-gray-900 mb-2">동네 녹지 환경 비교</h1>
-        <p className="text-gray-600">두 자치구의 녹지 접근성을 비교하여 이사 전 환경을 확인하세요</p>
+    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+      {/* 헤더 */}
+      <div className="mb-6">
+        <h1 className="text-2xl font-bold text-gray-900 mb-1">동네 녹지 환경 비교</h1>
+        <p className="text-gray-500 text-sm">지도에서 두 위치를 선택하여 실제 녹지 접근성을 비교하세요 (이사 전 동네 비교에 활용)</p>
       </div>
 
-      {/* 구 선택 */}
-      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 mb-6">
-        <div className="flex flex-col sm:flex-row items-center gap-4">
-          <div className="flex-1 w-full">
-            <label className="block text-sm font-medium text-gray-700 mb-2">비교 구 A</label>
-            <select
-              value={districtA}
-              onChange={(e) => setDistrictA(e.target.value)}
-              className="w-full border border-gray-300 rounded-xl px-4 py-3 text-gray-800 focus:outline-none focus:ring-2 focus:ring-green-500 bg-green-50"
-            >
-              {DISTRICTS.map((d) => (
-                <option key={d} value={d}>{d}</option>
-              ))}
-            </select>
-          </div>
-          <div className="flex items-center justify-center">
-            <div className="w-10 h-10 bg-gray-100 rounded-full flex items-center justify-center">
-              <ArrowLeftRight className="w-5 h-5 text-gray-500" />
-            </div>
-          </div>
-          <div className="flex-1 w-full">
-            <label className="block text-sm font-medium text-gray-700 mb-2">비교 구 B</label>
-            <select
-              value={districtB}
-              onChange={(e) => setDistrictB(e.target.value)}
-              className="w-full border border-gray-300 rounded-xl px-4 py-3 text-gray-800 focus:outline-none focus:ring-2 focus:ring-blue-500 bg-blue-50"
-            >
-              {DISTRICTS.map((d) => (
-                <option key={d} value={d}>{d}</option>
-              ))}
-            </select>
-          </div>
-        </div>
-      </div>
-
-      {/* 점수 카드 */}
-      <div className="grid grid-cols-2 gap-4 mb-6">
-        <div className="bg-white rounded-2xl shadow-sm border border-green-100 p-6 text-center">
-          <div className="text-lg font-bold text-gray-800 mb-3">{districtA}</div>
-          <div
-            className="text-5xl font-bold mb-2"
-            style={{ color: getScoreColor(statA.avgScore) }}
+      {/* 선택 안내 배너 */}
+      {selectMode && (
+        <div className={`mb-4 px-4 py-3 rounded-xl flex items-center gap-3 text-sm font-semibold ${
+          selectMode === 'A'
+            ? 'bg-green-50 border border-green-200 text-green-800'
+            : 'bg-blue-50 border border-blue-200 text-blue-800'
+        }`}>
+          <MapPin className="w-4 h-4 flex-shrink-0" />
+          {selectMode === 'A'
+            ? '📍 지도에서 비교할 위치 A를 클릭하세요'
+            : '📍 지도에서 비교할 위치 B를 클릭하세요'}
+          <button
+            onClick={handleReset}
+            className="ml-auto flex items-center gap-1 text-xs font-medium opacity-70 hover:opacity-100"
           >
-            {statA.avgScore}
-          </div>
-          <div className="text-sm text-gray-500">접근성 점수</div>
-          <div className={`inline-block mt-2 px-3 py-1 rounded-full text-xs font-semibold ${getScoreBgColor(statA.avgScore)}`}>
-            {statA.avgScore >= 70 ? '우수' : statA.avgScore >= 55 ? '보통' : '취약'}
-          </div>
+            <RotateCcw className="w-3 h-3" /> 초기화
+          </button>
         </div>
-        <div className="bg-white rounded-2xl shadow-sm border border-blue-100 p-6 text-center">
-          <div className="text-lg font-bold text-gray-800 mb-3">{districtB}</div>
-          <div
-            className="text-5xl font-bold mb-2"
-            style={{ color: getScoreColor(statB.avgScore) }}
-          >
-            {statB.avgScore}
-          </div>
-          <div className="text-sm text-gray-500">접근성 점수</div>
-          <div className={`inline-block mt-2 px-3 py-1 rounded-full text-xs font-semibold ${getScoreBgColor(statB.avgScore)}`}>
-            {statB.avgScore >= 70 ? '우수' : statB.avgScore >= 55 ? '보통' : '취약'}
-          </div>
-        </div>
-      </div>
+      )}
 
-      <div className="grid lg:grid-cols-2 gap-6 mb-6">
-        {/* 레이더 차트 */}
-        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
-          <h2 className="font-bold text-gray-800 mb-4">종합 비교 (레이더)</h2>
-          <ResponsiveContainer width="100%" height={280}>
-            <RadarChart data={radarData}>
-              <PolarGrid />
-              <PolarAngleAxis dataKey="subject" tick={{ fontSize: 12 }} />
-              <Radar name={districtA} dataKey="A" stroke="#16a34a" fill="#16a34a" fillOpacity={0.2} />
-              <Radar name={districtB} dataKey="B" stroke="#2563eb" fill="#2563eb" fillOpacity={0.2} />
-              <Tooltip />
-            </RadarChart>
-          </ResponsiveContainer>
-          <div className="flex justify-center gap-6 mt-2 text-sm">
-            <div className="flex items-center gap-2">
-              <div className="w-3 h-3 rounded-full bg-green-600" />
-              <span>{districtA}</span>
+      <div className="grid lg:grid-cols-5 gap-4">
+        {/* 지도 (3/5) */}
+        <div className="lg:col-span-3">
+          <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+            {/* 위치 선택 버튼 */}
+            <div className="p-3 border-b border-gray-100 flex gap-2 flex-wrap">
+              <button
+                onClick={() => setSelectMode('A')}
+                className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold transition-colors ${
+                  selectMode === 'A'
+                    ? 'bg-green-600 text-white'
+                    : locA ? 'bg-green-100 text-green-700 border border-green-300' : 'bg-gray-100 text-gray-600 hover:bg-green-50'
+                }`}
+              >
+                <div className="w-4 h-4 rounded-full bg-current opacity-80 flex items-center justify-center text-white text-xs font-bold" style={{ background: '#16a34a', color: 'white', fontSize: 9 }}>A</div>
+                {locA ? `A: ${locA.lat.toFixed(3)}, ${locA.lng.toFixed(3)}` : '위치 A 선택'}
+              </button>
+              <button
+                onClick={() => setSelectMode('B')}
+                className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold transition-colors ${
+                  selectMode === 'B'
+                    ? 'bg-blue-600 text-white'
+                    : locB ? 'bg-blue-100 text-blue-700 border border-blue-300' : 'bg-gray-100 text-gray-600 hover:bg-blue-50'
+                }`}
+              >
+                <div style={{ background: '#2563eb', color: 'white', fontSize: 9, width: 16, height: 16, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold' }}>B</div>
+                {locB ? `B: ${locB.lat.toFixed(3)}, ${locB.lng.toFixed(3)}` : '위치 B 선택'}
+              </button>
+              <button
+                onClick={() => handleGetMyLocation(selectMode ?? 'A')}
+                className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold bg-gray-100 text-gray-600 hover:bg-gray-200 transition-colors ml-auto"
+              >
+                <Navigation className="w-3.5 h-3.5" />
+                내 위치로 {selectMode ?? 'A'} 설정
+              </button>
+              {(locA || locB) && (
+                <button onClick={handleReset} className="flex items-center gap-1 px-3 py-2 rounded-lg text-xs font-semibold bg-red-50 text-red-600 hover:bg-red-100 transition-colors">
+                  <RotateCcw className="w-3 h-3" /> 초기화
+                </button>
+              )}
             </div>
-            <div className="flex items-center gap-2">
-              <div className="w-3 h-3 rounded-full bg-blue-600" />
-              <span>{districtB}</span>
+
+            {/* 지도 */}
+            <div style={{ height: 400 }}>
+              <MapContainer
+                center={mapCenter}
+                zoom={12}
+                style={{ width: '100%', height: '100%', cursor: selectMode ? 'crosshair' : 'grab' }}
+              >
+                <TileLayer
+                  attribution='&copy; VWorld'
+                  url={`https://api.vworld.kr/req/wmts/1.0.0/${VWORLD_KEY}/Base/{z}/{y}/{x}.png`}
+                  maxZoom={19}
+                />
+                <MapClickHandler onMapClick={handleMapClick} enabled={!!selectMode} />
+                {locA && (
+                  <Marker position={[locA.lat, locA.lng]} icon={iconA}>
+                    <Popup>
+                      <div className="text-sm font-bold text-green-700">📍 위치 A</div>
+                      <div className="text-xs text-gray-500">{locA.lat.toFixed(5)}, {locA.lng.toFixed(5)}</div>
+                      {scoreA && <div className="text-xs font-semibold mt-1" style={{ color: colorA }}>점수: {scoreA.score}점 ({scoreA.grade}등급)</div>}
+                    </Popup>
+                  </Marker>
+                )}
+                {locB && (
+                  <Marker position={[locB.lat, locB.lng]} icon={iconB}>
+                    <Popup>
+                      <div className="text-sm font-bold text-blue-700">📍 위치 B</div>
+                      <div className="text-xs text-gray-500">{locB.lat.toFixed(5)}, {locB.lng.toFixed(5)}</div>
+                      {scoreB && <div className="text-xs font-semibold mt-1" style={{ color: colorB }}>점수: {scoreB.score}점 ({scoreB.grade}등급)</div>}
+                    </Popup>
+                  </Marker>
+                )}
+              </MapContainer>
             </div>
           </div>
+
+          {/* 사용 안내 */}
+          {!locA && !locB && (
+            <div className="mt-3 bg-gray-50 rounded-xl p-4 text-sm text-gray-600">
+              <p className="font-semibold text-gray-700 mb-2">📌 사용 방법</p>
+              <ol className="space-y-1 text-xs list-decimal list-inside">
+                <li>지도에서 <strong className="text-green-700">위치 A</strong>를 클릭 (현재 동네)</li>
+                <li>지도에서 <strong className="text-blue-700">위치 B</strong>를 클릭 (이사 예정 동네)</li>
+                <li>두 위치의 실제 녹지 접근성 점수를 비교</li>
+              </ol>
+              <p className="text-xs text-gray-400 mt-2">💡 "내 위치로 설정" 버튼으로 현재 위치를 자동 입력할 수 있습니다</p>
+            </div>
+          )}
         </div>
 
-        {/* 막대 차트 */}
-        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
-          <h2 className="font-bold text-gray-800 mb-4">항목별 비교</h2>
-          <ResponsiveContainer width="100%" height={280}>
-            <BarChart data={barData} layout="vertical">
-              <CartesianGrid strokeDasharray="3 3" />
-              <XAxis type="number" tick={{ fontSize: 11 }} />
-              <YAxis dataKey="name" type="category" tick={{ fontSize: 11 }} width={80} />
-              <Tooltip />
-              <Bar dataKey="A" name={districtA} fill="#16a34a" radius={[0, 4, 4, 0]} />
-              <Bar dataKey="B" name={districtB} fill="#2563eb" radius={[0, 4, 4, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
+        {/* 결과 패널 (2/5) */}
+        <div className="lg:col-span-2 space-y-4">
+          {/* 점수 카드 A */}
+          <div className={`bg-white rounded-2xl shadow-sm border p-5 ${locA ? 'border-green-200' : 'border-gray-100'}`}>
+            <div className="flex items-center gap-2 mb-3">
+              <div style={{ background: '#16a34a', color: 'white', width: 24, height: 24, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 'bold' }}>A</div>
+              <span className="font-bold text-gray-800 text-sm">
+                {locA ? `${locA.lat.toFixed(4)}, ${locA.lng.toFixed(4)}` : '위치 A 미선택'}
+              </span>
+            </div>
+            {loadingA ? (
+              <div className="flex items-center gap-2 text-gray-400 py-4 justify-center">
+                <Loader2 className="w-5 h-5 animate-spin" />
+                <span className="text-sm">분석 중...</span>
+              </div>
+            ) : scoreA && !scoreA.error ? (
+              <>
+                <div className="flex items-center gap-3 mb-3">
+                  <div className="w-16 h-16 rounded-full flex items-center justify-center flex-shrink-0"
+                    style={{ background: `conic-gradient(${colorA} ${scoreA.score * 3.6}deg, #e5e7eb 0deg)` }}>
+                    <div className="w-12 h-12 rounded-full flex flex-col items-center justify-center" style={{ background: colorA }}>
+                      <span className="text-lg font-bold text-white leading-none">{scoreA.score}</span>
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-xl font-bold" style={{ color: colorA }}>{scoreA.grade}등급</div>
+                    <div className="text-xs text-gray-500 mt-0.5 truncate max-w-[140px]">📍 {scoreA.nearestPark.name}</div>
+                    <div className="text-xs text-gray-500">도보 {scoreA.walkingTime}분 · {scoreA.walkingDistance}m</div>
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-1.5 text-xs">
+                  <div className="bg-green-50 rounded-lg p-2">
+                    <div className="text-gray-500">500m 내</div>
+                    <div className="font-bold text-green-700">{scoreA.parkCount500m}개</div>
+                  </div>
+                  <div className="bg-blue-50 rounded-lg p-2">
+                    <div className="text-gray-500">1km 내</div>
+                    <div className="font-bold text-blue-700">{scoreA.parkCount1km}개</div>
+                  </div>
+                </div>
+              </>
+            ) : (
+              <div className="text-center py-6 text-gray-400 text-sm">
+                {locA ? '분석 실패' : '지도에서 위치 A를 선택하세요'}
+              </div>
+            )}
+          </div>
+
+          {/* VS 구분선 */}
+          <div className="flex items-center gap-3">
+            <div className="flex-1 h-px bg-gray-200" />
+            <div className="w-8 h-8 bg-gray-100 rounded-full flex items-center justify-center">
+              <ArrowLeftRight className="w-4 h-4 text-gray-500" />
+            </div>
+            <div className="flex-1 h-px bg-gray-200" />
+          </div>
+
+          {/* 점수 카드 B */}
+          <div className={`bg-white rounded-2xl shadow-sm border p-5 ${locB ? 'border-blue-200' : 'border-gray-100'}`}>
+            <div className="flex items-center gap-2 mb-3">
+              <div style={{ background: '#2563eb', color: 'white', width: 24, height: 24, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 'bold' }}>B</div>
+              <span className="font-bold text-gray-800 text-sm">
+                {locB ? `${locB.lat.toFixed(4)}, ${locB.lng.toFixed(4)}` : '위치 B 미선택'}
+              </span>
+            </div>
+            {loadingB ? (
+              <div className="flex items-center gap-2 text-gray-400 py-4 justify-center">
+                <Loader2 className="w-5 h-5 animate-spin" />
+                <span className="text-sm">분석 중...</span>
+              </div>
+            ) : scoreB && !scoreB.error ? (
+              <>
+                <div className="flex items-center gap-3 mb-3">
+                  <div className="w-16 h-16 rounded-full flex items-center justify-center flex-shrink-0"
+                    style={{ background: `conic-gradient(${colorB} ${scoreB.score * 3.6}deg, #e5e7eb 0deg)` }}>
+                    <div className="w-12 h-12 rounded-full flex flex-col items-center justify-center" style={{ background: colorB }}>
+                      <span className="text-lg font-bold text-white leading-none">{scoreB.score}</span>
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-xl font-bold" style={{ color: colorB }}>{scoreB.grade}등급</div>
+                    <div className="text-xs text-gray-500 mt-0.5 truncate max-w-[140px]">📍 {scoreB.nearestPark.name}</div>
+                    <div className="text-xs text-gray-500">도보 {scoreB.walkingTime}분 · {scoreB.walkingDistance}m</div>
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-1.5 text-xs">
+                  <div className="bg-green-50 rounded-lg p-2">
+                    <div className="text-gray-500">500m 내</div>
+                    <div className="font-bold text-green-700">{scoreB.parkCount500m}개</div>
+                  </div>
+                  <div className="bg-blue-50 rounded-lg p-2">
+                    <div className="text-gray-500">1km 내</div>
+                    <div className="font-bold text-blue-700">{scoreB.parkCount1km}개</div>
+                  </div>
+                </div>
+              </>
+            ) : (
+              <div className="text-center py-6 text-gray-400 text-sm">
+                {locB ? '분석 실패' : '지도에서 위치 B를 선택하세요'}
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
       {/* 상세 비교 테이블 */}
-      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-        <div className="px-6 py-4 border-b border-gray-100">
-          <h2 className="font-bold text-gray-800">상세 지표 비교</h2>
-        </div>
-        <table className="w-full">
-          <thead>
-            <tr className="bg-gray-50">
-              <th className="text-left px-6 py-3 text-sm font-semibold text-gray-600">지표</th>
-              <th className="text-center px-6 py-3 text-sm font-semibold text-green-700">{districtA}</th>
-              <th className="text-center px-6 py-3 text-sm font-semibold text-gray-400">비교</th>
-              <th className="text-center px-6 py-3 text-sm font-semibold text-blue-700">{districtB}</th>
-            </tr>
-          </thead>
-          <tbody>
-            {compareItems.map((item, i) => (
-              <tr key={item.label} className={i % 2 === 0 ? 'bg-white' : 'bg-gray-50/50'}>
-                <td className="px-6 py-4 text-sm font-medium text-gray-700">{item.label}</td>
-                <td className="px-6 py-4 text-center">
-                  <span className={`text-sm font-bold ${
-                    item.higherIsBetter
-                      ? item.keyA > item.keyB ? 'text-green-700' : item.keyA < item.keyB ? 'text-red-500' : 'text-gray-600'
-                      : item.keyA < item.keyB ? 'text-green-700' : item.keyA > item.keyB ? 'text-red-500' : 'text-gray-600'
-                  }`}>
-                    {item.keyA}{item.unit}
-                  </span>
-                </td>
-                <td className="px-6 py-4 text-center">
-                  <div className="flex justify-center">
-                    <CompareIcon a={item.keyA} b={item.keyB} higherIsBetter={item.higherIsBetter} />
-                  </div>
-                </td>
-                <td className="px-6 py-4 text-center">
-                  <span className={`text-sm font-bold ${
-                    item.higherIsBetter
-                      ? item.keyB > item.keyA ? 'text-blue-700' : item.keyB < item.keyA ? 'text-red-500' : 'text-gray-600'
-                      : item.keyB < item.keyA ? 'text-blue-700' : item.keyB > item.keyA ? 'text-red-500' : 'text-gray-600'
-                  }`}>
-                    {item.keyB}{item.unit}
-                  </span>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      {scoreA && scoreB && !scoreA.error && !scoreB.error && (
+        <div className="mt-6 bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+          <div className="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
+            <h2 className="font-bold text-gray-800">상세 지표 비교</h2>
+            <div className="flex items-center gap-4 text-xs">
+              <div className="flex items-center gap-1.5"><div className="w-3 h-3 rounded-full bg-green-600" /><span>위치 A</span></div>
+              <div className="flex items-center gap-1.5"><div className="w-3 h-3 rounded-full bg-blue-600" /><span>위치 B</span></div>
+            </div>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead>
+                <tr className="bg-gray-50">
+                  <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500">지표</th>
+                  <th className="text-center px-4 py-3 text-xs font-semibold text-green-700">위치 A</th>
+                  <th className="text-center px-4 py-3 text-xs font-semibold text-gray-400">비교</th>
+                  <th className="text-center px-4 py-3 text-xs font-semibold text-blue-700">위치 B</th>
+                </tr>
+              </thead>
+              <tbody>
+                {compareItems.map((item, i) => (
+                  <tr key={item.label} className={i % 2 === 0 ? 'bg-white' : 'bg-gray-50/50'}>
+                    <td className="px-4 py-3 text-sm font-medium text-gray-700">{item.label}</td>
+                    <td className="px-4 py-3 text-center">
+                      <span className={`text-sm font-bold ${
+                        item.higherIsBetter
+                          ? item.a > item.b ? 'text-green-700' : item.a < item.b ? 'text-red-500' : 'text-gray-600'
+                          : item.a < item.b ? 'text-green-700' : item.a > item.b ? 'text-red-500' : 'text-gray-600'
+                      }`}>{item.a}{item.unit}</span>
+                    </td>
+                    <td className="px-4 py-3 text-center">
+                      <div className="flex justify-center">
+                        <CompareIcon a={item.a} b={item.b} higherIsBetter={item.higherIsBetter} />
+                      </div>
+                    </td>
+                    <td className="px-4 py-3 text-center">
+                      <span className={`text-sm font-bold ${
+                        item.higherIsBetter
+                          ? item.b > item.a ? 'text-blue-700' : item.b < item.a ? 'text-red-500' : 'text-gray-600'
+                          : item.b < item.a ? 'text-blue-700' : item.b > item.a ? 'text-red-500' : 'text-gray-600'
+                      }`}>{item.b}{item.unit}</span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
 
-      {/* 결론 */}
-      <div className="mt-6 bg-gradient-to-r from-green-50 to-blue-50 rounded-2xl p-6 border border-green-100">
-        <h3 className="font-bold text-gray-800 mb-3">📊 분석 결론</h3>
-        <div className="text-sm text-gray-700 leading-relaxed">
-          {statA.avgScore > statB.avgScore ? (
-            <p>
-              <strong className="text-green-700">{districtA}</strong>가 <strong className="text-blue-700">{districtB}</strong>보다
-              녹지 접근성이 <strong>{statA.avgScore - statB.avgScore}점</strong> 높습니다.
-              {statA.greenAreaPerCapita > statB.greenAreaPerCapita
-                ? ` 1인당 녹지 면적도 ${(statA.greenAreaPerCapita - statB.greenAreaPerCapita).toFixed(1)}㎡ 더 넓어 전반적으로 녹지 환경이 우수합니다.`
-                : ` 다만 1인당 녹지 면적은 ${districtB}가 더 넓습니다.`}
+          {/* 결론 */}
+          <div className="px-6 py-4 bg-gradient-to-r from-green-50 to-blue-50 border-t border-gray-100">
+            <h3 className="font-bold text-gray-800 mb-2 text-sm">📊 분석 결론</h3>
+            <p className="text-sm text-gray-700 leading-relaxed">
+              {scoreA.score > scoreB.score ? (
+                <>
+                  <strong className="text-green-700">위치 A</strong>가 <strong className="text-blue-700">위치 B</strong>보다
+                  녹지 접근성이 <strong>{scoreA.score - scoreB.score}점</strong> 높습니다.
+                  {scoreA.parkCount500m > scoreB.parkCount500m
+                    ? ` 500m 내 공원도 ${scoreA.parkCount500m - scoreB.parkCount500m}개 더 많아 전반적으로 녹지 환경이 우수합니다.`
+                    : ` 단, 500m 내 공원 수는 비슷합니다.`}
+                </>
+              ) : scoreA.score < scoreB.score ? (
+                <>
+                  <strong className="text-blue-700">위치 B</strong>가 <strong className="text-green-700">위치 A</strong>보다
+                  녹지 접근성이 <strong>{scoreB.score - scoreA.score}점</strong> 높습니다.
+                  {scoreB.parkCount500m > scoreA.parkCount500m
+                    ? ` 500m 내 공원도 ${scoreB.parkCount500m - scoreA.parkCount500m}개 더 많아 전반적으로 녹지 환경이 우수합니다.`
+                    : ` 단, 500m 내 공원 수는 비슷합니다.`}
+                </>
+              ) : (
+                '두 위치의 녹지 접근성 점수가 동일합니다. 세부 지표를 비교하여 선택하세요.'
+              )}
             </p>
-          ) : statA.avgScore < statB.avgScore ? (
-            <p>
-              <strong className="text-blue-700">{districtB}</strong>가 <strong className="text-green-700">{districtA}</strong>보다
-              녹지 접근성이 <strong>{statB.avgScore - statA.avgScore}점</strong> 높습니다.
-              {statB.greenAreaPerCapita > statA.greenAreaPerCapita
-                ? ` 1인당 녹지 면적도 ${(statB.greenAreaPerCapita - statA.greenAreaPerCapita).toFixed(1)}㎡ 더 넓어 전반적으로 녹지 환경이 우수합니다.`
-                : ` 다만 1인당 녹지 면적은 ${districtA}가 더 넓습니다.`}
-            </p>
-          ) : (
-            <p>두 구의 녹지 접근성 점수가 동일합니다. 세부 지표를 비교하여 선택하세요.</p>
-          )}
+          </div>
         </div>
+      )}
+
+      {/* 데이터 출처 */}
+      <div className="mt-4 text-xs text-gray-400 text-center">
+        공공데이터포털 전국도시공원정보표준데이터 + OSRM 보행 네트워크 분석
       </div>
     </div>
   );

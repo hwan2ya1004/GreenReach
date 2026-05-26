@@ -95,8 +95,17 @@ const clickIcon = L.divIcon({
 });
 
 // ─── 지도 이벤트 컴포넌트 ─────────────────────────────────────────────────────
-function MapClickHandler({ onMapClick }: { onMapClick: (lat: number, lng: number) => void }) {
-  useMapEvents({ click(e) { onMapClick(e.latlng.lat, e.latlng.lng); } });
+function MapClickHandler({ onMapClick, enabled }: { onMapClick: (lat: number, lng: number) => void; enabled: boolean }) {
+  useMapEvents({
+    click(e) {
+      // 마커/팝업 클릭 시 이벤트가 전파되지 않도록 originalEvent 확인
+      if (!enabled) return;
+      const target = e.originalEvent.target as HTMLElement;
+      // 마커나 팝업 내부 클릭이면 무시
+      if (target.closest('.leaflet-marker-icon') || target.closest('.leaflet-popup')) return;
+      onMapClick(e.latlng.lat, e.latlng.lng);
+    }
+  });
   return null;
 }
 
@@ -171,12 +180,26 @@ export default function MapView() {
   const dragStartY = useRef<number>(0);
   const dragStartSnap = useRef<PanelSnap>('peek');
 
-  // 백엔드 상태 확인
+  // 백엔드 상태 확인 + 자동 위치 감지
   useEffect(() => {
     fetch(`${API_BASE}/health`)
       .then(r => r.json())
       .then(d => setBackendOnline(d.status === 'ok'))
       .catch(() => setBackendOnline(false));
+
+    // 페이지 로드 시 자동 위치 감지
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          setUserLat(pos.coords.latitude);
+          setUserLng(pos.coords.longitude);
+        },
+        () => {
+          // 거부 시 기본값(서울 시청) 유지 - 조용히 실패
+        },
+        { timeout: 8000, maximumAge: 60000 }
+      );
+    }
   }, []);
 
   const analyzeLocation = useCallback(async (lat: number, lng: number) => {
@@ -612,7 +635,7 @@ export default function MapView() {
         tileSize={256}
       />
       <MapCenter lat={userLat} lng={userLng} />
-      <MapClickHandler onMapClick={handleMapClick} />
+      <MapClickHandler onMapClick={handleMapClick} enabled={clickMode} />
 
       <Marker position={[userLat, userLng]} icon={clickMode ? clickIcon : userIcon}>
         <Popup>
