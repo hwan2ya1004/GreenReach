@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from 'recharts';
-import { Building2, AlertTriangle, TrendingUp, Download, MessageSquare, Send, Brain, Loader2, Database } from 'lucide-react';
+import { Building2, AlertTriangle, TrendingUp, Download, MessageSquare, Send, Brain, Loader2, Database, Wifi, WifiOff, RefreshCw } from 'lucide-react';
 import { getScoreColor, getScoreBgColor } from '../utils/accessibility';
 import type { ChatMessage } from '../types';
 
@@ -12,17 +12,60 @@ interface DistrictStat {
   parkCount: number;
   totalArea: number;
   avgArea: number;
-  // 접근성 점수는 공원 수/면적 기반으로 계산
   score?: number;
+}
+
+// ─── 간단한 마크다운 렌더러 ──────────────────────────────────────────────────
+function MarkdownText({ text }: { text: string }) {
+  const lines = text.split('\n');
+  return (
+    <div className="space-y-1">
+      {lines.map((line, i) => {
+        if (line.trim() === '') return <div key={i} className="h-1" />;
+
+        // 굵은 텍스트 파싱 (**text**)
+        const renderInline = (str: string) => {
+          const parts = str.split(/(\*\*[^*]+\*\*)/g);
+          return parts.map((part, j) => {
+            if (part.startsWith('**') && part.endsWith('**')) {
+              return <strong key={j} className="font-bold">{part.slice(2, -2)}</strong>;
+            }
+            return <span key={j}>{part}</span>;
+          });
+        };
+
+        // 불릿 포인트 (• 또는 -)
+        if (line.trim().startsWith('•') || line.trim().startsWith('-')) {
+          const content = line.trim().replace(/^[•\-]\s*/, '');
+          return (
+            <div key={i} className="flex items-start gap-1.5 ml-1">
+              <span className="text-green-500 mt-0.5 flex-shrink-0">•</span>
+              <span>{renderInline(content)}</span>
+            </div>
+          );
+        }
+
+        // 번호 목록 (1. 2. 3.)
+        const numMatch = line.trim().match(/^(\d+)\.\s+(.+)/);
+        if (numMatch) {
+          return (
+            <div key={i} className="flex items-start gap-1.5 ml-1">
+              <span className="text-green-600 font-bold flex-shrink-0 w-4">{numMatch[1]}.</span>
+              <span>{renderInline(numMatch[2])}</span>
+            </div>
+          );
+        }
+
+        return <div key={i}>{renderInline(line)}</div>;
+      })}
+    </div>
+  );
 }
 
 // ─── 공원 수/면적 기반 접근성 점수 추정 ──────────────────────────────────────
 function estimateScore(stat: DistrictStat, maxCount: number, maxArea: number): number {
-  // 공원 수 점수: 최대 60점 (상위 지역 대비 비율) — 가장 중요한 지표
   const countScore = Math.min(60, Math.round((stat.parkCount / maxCount) * 60));
-  // 총 면적 점수: 최대 25점 (상위 지역 대비 비율)
   const areaScore = Math.min(25, Math.round((stat.totalArea / maxArea) * 25));
-  // 평균 면적 점수: 최대 15점 (1만㎡ 이상이면 만점)
   const avgArea = stat.avgArea ?? 0;
   const avgScore =
     avgArea >= 100000 ? 15 :
@@ -34,7 +77,7 @@ function estimateScore(stat: DistrictStat, maxCount: number, maxArea: number): n
 }
 
 // ─── AI 챗봇 응답 (백엔드 ML API 호출) ──────────────────────────────────────
-async function fetchMLResponse(question: string): Promise<string> {
+async function fetchMLResponse(question: string): Promise<{ answer: string; intent?: string; confidence?: number }> {
   try {
     const res = await fetch(`${API_BASE}/api/ai/chat`, {
       method: 'POST',
@@ -43,9 +86,15 @@ async function fetchMLResponse(question: string): Promise<string> {
     });
     if (!res.ok) throw new Error('API 오류');
     const data = await res.json();
-    return data.answer ?? '응답을 받지 못했습니다.';
+    return {
+      answer: data.answer ?? '응답을 받지 못했습니다.',
+      intent: data.intent,
+      confidence: data.confidence,
+    };
   } catch {
-    return '서버에 연결할 수 없습니다. 백엔드가 실행 중인지 확인해주세요.';
+    return {
+      answer: '⚠️ 서버에 연결할 수 없습니다.\n\n백엔드 서버가 실행 중인지 확인해주세요:\n```\npython -m uvicorn backend.main:app --port 8000\n```',
+    };
   }
 }
 
@@ -55,6 +104,7 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [selectedDistrict, setSelectedDistrict] = useState<string | null>(null);
+  const [serverOnline, setServerOnline] = useState<boolean | null>(null);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
     {
       id: '0',
@@ -65,10 +115,22 @@ export default function Dashboard() {
   ]);
   const [chatInput, setChatInput] = useState('');
   const [chatLoading, setChatLoading] = useState(false);
+  const chatEndRef = useRef<HTMLDivElement>(null);
+
+  // 서버 상태 확인
+  const checkServerStatus = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/health`, { signal: AbortSignal.timeout(3000) });
+      setServerOnline(res.ok);
+    } catch {
+      setServerOnline(false);
+    }
+  };
 
   // 백엔드 API에서 실제 데이터 로드
-  useEffect(() => {
+  const loadData = () => {
     setLoading(true);
+    setError('');
     fetch(`${API_BASE}/api/districts/stats`)
       .then(r => r.json())
       .then(data => {
@@ -83,25 +145,38 @@ export default function Dashboard() {
           score: estimateScore(d, maxCount, maxArea),
         }));
         setStats(withScores);
+        setServerOnline(true);
         setLoading(false);
       })
       .catch(() => {
         setError('서버에서 데이터를 불러올 수 없습니다.');
+        setServerOnline(false);
         setLoading(false);
       });
+  };
+
+  useEffect(() => {
+    checkServerStatus();
+    loadData();
   }, []);
 
+  // 채팅 스크롤 자동 이동
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [chatMessages, chatLoading]);
+
   const sortedStats = [...stats].sort((a, b) => b.parkCount - a.parkCount);
-  const top20 = sortedStats.slice(0, 20); // 차트에 상위 20개만 표시
+  const top20 = sortedStats.slice(0, 20);
   const selectedStat = selectedDistrict ? stats.find(d => d.district === selectedDistrict) : null;
 
   const totalParks = stats.reduce((s, d) => s + d.parkCount, 0);
   const totalArea = stats.reduce((s, d) => s + d.totalArea, 0);
   const vulnerableCount = stats.filter(d => (d.score ?? 0) < 50).length;
 
-  const handleSendChat = async () => {
-    if (!chatInput.trim() || chatLoading) return;
-    const question = chatInput.trim();
+  const handleSendChat = async (overrideQuestion?: string) => {
+    const question = (overrideQuestion ?? chatInput).trim();
+    if (!question || chatLoading) return;
+
     const userMsg: ChatMessage = {
       id: Date.now().toString(),
       role: 'user',
@@ -112,13 +187,16 @@ export default function Dashboard() {
     setChatInput('');
     setChatLoading(true);
 
-    const answer = await fetchMLResponse(question);
+    const { answer, intent, confidence } = await fetchMLResponse(question);
 
     const aiMsg: ChatMessage = {
       id: (Date.now() + 1).toString(),
       role: 'assistant',
       content: answer,
       timestamp: new Date(),
+      // @ts-ignore - 추가 메타데이터
+      intent,
+      confidence,
     };
     setChatMessages(prev => [...prev, aiMsg]);
     setChatLoading(false);
@@ -152,9 +230,20 @@ export default function Dashboard() {
     return (
       <div className="max-w-7xl mx-auto px-4 py-8">
         <div className="bg-red-50 border border-red-200 rounded-xl p-6 text-center">
-          <AlertTriangle className="w-8 h-8 text-red-500 mx-auto mb-2" />
+          <WifiOff className="w-8 h-8 text-red-500 mx-auto mb-2" />
           <p className="text-red-700 font-semibold">{error}</p>
-          <p className="text-red-500 text-sm mt-1">백엔드 서버가 실행 중인지 확인하세요.</p>
+          <p className="text-red-500 text-sm mt-1 mb-4">백엔드 서버가 실행 중인지 확인하세요.</p>
+          <div className="bg-gray-900 text-green-400 text-xs rounded-lg p-3 text-left font-mono mb-4 max-w-md mx-auto">
+            <div className="text-gray-400 mb-1"># 백엔드 서버 시작</div>
+            <div>python -m uvicorn backend.main:app --port 8000</div>
+          </div>
+          <button
+            onClick={loadData}
+            className="flex items-center gap-2 bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg text-sm mx-auto transition-colors"
+          >
+            <RefreshCw className="w-4 h-4" />
+            다시 시도
+          </button>
         </div>
       </div>
     );
@@ -172,6 +261,18 @@ export default function Dashboard() {
           <p className="text-gray-500 mt-1 text-sm flex items-center gap-1.5">
             <Database className="w-3.5 h-3.5 text-green-600" />
             공공데이터포털 전국도시공원정보표준데이터 실시간 연동 · {stats.length}개 지역
+            {/* 서버 상태 표시 */}
+            <span className={`ml-2 flex items-center gap-1 text-xs px-2 py-0.5 rounded-full ${
+              serverOnline === true ? 'bg-green-100 text-green-700' :
+              serverOnline === false ? 'bg-red-100 text-red-600' :
+              'bg-gray-100 text-gray-500'
+            }`}>
+              {serverOnline === true ? <Wifi className="w-3 h-3" /> :
+               serverOnline === false ? <WifiOff className="w-3 h-3" /> :
+               <Loader2 className="w-3 h-3 animate-spin" />}
+              {serverOnline === true ? '서버 연결됨' :
+               serverOnline === false ? '서버 오프라인' : '확인 중'}
+            </span>
           </p>
         </div>
         <button
@@ -257,6 +358,15 @@ export default function Dashboard() {
                 <div className="flex justify-between"><span className="text-gray-500">총 녹지 면적</span><span className="font-medium">{(selectedStat.totalArea / 10000).toFixed(1)}ha</span></div>
                 <div className="flex justify-between"><span className="text-gray-500">평균 공원 면적</span><span className="font-medium">{(selectedStat.avgArea / 10000).toFixed(2)}ha</span></div>
               </div>
+              {/* AI에게 물어보기 버튼 */}
+              <button
+                onClick={() => handleSendChat(`${selectedStat.district} 현황 알려줘`)}
+                disabled={chatLoading || !serverOnline}
+                className="mt-3 w-full text-xs bg-purple-50 hover:bg-purple-100 text-purple-700 py-2 rounded-lg transition-colors disabled:opacity-50 flex items-center justify-center gap-1"
+              >
+                <Brain className="w-3 h-3" />
+                AI에게 {selectedStat.district} 분석 요청
+              </button>
             </div>
           ) : (
             <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-5">
@@ -284,7 +394,11 @@ export default function Dashboard() {
                 .sort((a, b) => (a.score ?? 0) - (b.score ?? 0))
                 .slice(0, 5)
                 .map((zone) => (
-                  <div key={zone.district} className="flex items-center gap-2">
+                  <div
+                    key={zone.district}
+                    className="flex items-center gap-2 cursor-pointer hover:bg-red-50 rounded-lg p-1 transition-colors"
+                    onClick={() => handleSendChat(`${zone.district} 현황 알려줘`)}
+                  >
                     <div className="w-2 h-2 rounded-full flex-shrink-0 bg-red-500" />
                     <div className="flex-1 min-w-0">
                       <div className="text-xs font-medium text-gray-800 truncate">{zone.district}</div>
@@ -296,7 +410,7 @@ export default function Dashboard() {
             </div>
             <div className="mt-3 text-xs text-gray-400 flex items-center gap-1">
               <AlertTriangle className="w-3 h-3" />
-              공원 수/면적 기반 추정 점수
+              클릭하면 AI 분석을 요청합니다
             </div>
           </div>
         </div>
@@ -352,29 +466,66 @@ export default function Dashboard() {
           <div className="ml-auto flex items-center gap-2">
             <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full">scikit-learn ML</span>
             <span className="text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full">실제 DB 연동</span>
+            {/* 서버 상태 뱃지 */}
+            <span className={`text-xs px-2 py-0.5 rounded-full flex items-center gap-1 ${
+              serverOnline ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-600'
+            }`}>
+              {serverOnline ? <Wifi className="w-3 h-3" /> : <WifiOff className="w-3 h-3" />}
+              {serverOnline ? '온라인' : '오프라인'}
+            </span>
           </div>
         </div>
-        <div className="h-64 overflow-y-auto p-4 space-y-3 bg-gray-50">
+
+        {/* 서버 오프라인 경고 */}
+        {serverOnline === false && (
+          <div className="mx-4 mt-3 bg-amber-50 border border-amber-200 rounded-lg px-4 py-2.5 flex items-center gap-2 text-sm text-amber-700">
+            <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+            <span>백엔드 서버가 오프라인입니다. AI 응답이 제한될 수 있습니다.</span>
+            <button onClick={checkServerStatus} className="ml-auto text-xs underline hover:no-underline">재확인</button>
+          </div>
+        )}
+
+        <div className="h-72 overflow-y-auto p-4 space-y-3 bg-gray-50">
           {chatMessages.map((msg) => (
             <div key={msg.id} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-              <div className={`max-w-[80%] rounded-2xl px-4 py-2.5 text-sm whitespace-pre-line ${
+              <div className={`max-w-[85%] rounded-2xl px-4 py-3 text-sm ${
                 msg.role === 'user'
                   ? 'bg-green-600 text-white rounded-br-sm'
                   : 'bg-white text-gray-800 shadow-sm border border-gray-100 rounded-bl-sm'
               }`}>
-                {msg.content}
+                {msg.role === 'assistant' ? (
+                  <MarkdownText text={msg.content} />
+                ) : (
+                  <span>{msg.content}</span>
+                )}
+                {/* 신뢰도 표시 (AI 응답에만) */}
+                {msg.role === 'assistant' && (msg as any).confidence > 0 && (
+                  <div className="mt-2 pt-2 border-t border-gray-100 flex items-center gap-1.5">
+                    <Brain className="w-3 h-3 text-purple-400" />
+                    <span className="text-xs text-gray-400">
+                      의도: {(msg as any).intent} · 신뢰도 {Math.round((msg as any).confidence * 100)}%
+                    </span>
+                  </div>
+                )}
               </div>
             </div>
           ))}
           {chatLoading && (
             <div className="flex justify-start">
-              <div className="bg-white rounded-2xl rounded-bl-sm px-4 py-2.5 shadow-sm border border-gray-100 flex items-center gap-2">
+              <div className="bg-white rounded-2xl rounded-bl-sm px-4 py-3 shadow-sm border border-gray-100 flex items-center gap-2">
                 <Loader2 className="w-3.5 h-3.5 animate-spin text-purple-500" />
                 <span className="text-xs text-gray-400">ML 모델 분석 중...</span>
+                <div className="flex gap-0.5 ml-1">
+                  {[0, 1, 2].map(i => (
+                    <div key={i} className="w-1.5 h-1.5 bg-purple-300 rounded-full animate-bounce" style={{ animationDelay: `${i * 0.15}s` }} />
+                  ))}
+                </div>
               </div>
             </div>
           )}
+          <div ref={chatEndRef} />
         </div>
+
         <div className="p-4 border-t border-gray-100">
           <div className="flex gap-2">
             <input
@@ -387,25 +538,26 @@ export default function Dashboard() {
               className="flex-1 border border-gray-300 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-green-500 disabled:opacity-50"
             />
             <button
-              onClick={handleSendChat}
-              disabled={chatLoading}
+              onClick={() => handleSendChat()}
+              disabled={chatLoading || !chatInput.trim()}
               className="bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white p-2.5 rounded-xl transition-colors"
             >
               {chatLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
             </button>
           </div>
+          {/* 빠른 질문 버튼 */}
           <div className="flex gap-2 mt-2 flex-wrap">
             {[
-              '녹지 가장 좋은 곳?',
-              '취약 지역은?',
-              '공원 가장 많은 곳?',
-              '전국 평균 통계',
-              'AI 예측 결과 알려줘',
-              '강남구와 비슷한 지역은?',
+              '🏆 녹지 가장 좋은 곳?',
+              '⚠️ 취약 지역은?',
+              '🌳 공원 가장 많은 곳?',
+              '📊 전국 평균 통계',
+              '🤖 AI 예측 결과 알려줘',
+              '🔍 강남구와 비슷한 지역은?',
             ].map((q) => (
               <button
                 key={q}
-                onClick={() => setChatInput(q)}
+                onClick={() => handleSendChat(q.replace(/^[^\s]+\s/, ''))}
                 disabled={chatLoading}
                 className="text-xs bg-gray-100 hover:bg-green-100 text-gray-600 hover:text-green-700 px-3 py-1 rounded-full transition-colors disabled:opacity-50"
               >

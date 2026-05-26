@@ -229,6 +229,8 @@ INTENT_CORPUS = {
         "최하위 지역", "녹지 최악", "공원 적은 곳", "취약한 지역",
         "녹지 접근성 낮은", "공원 부족한 지역", "녹지 열악",
         "개선 필요", "녹지 취약", "공원 가장 적은",
+        "취약 지역은", "취약 지역 어디", "취약한 곳",
+        "취약 지역 알려줘", "취약 지역 보여줘",
         # 자연어 표현
         "공원 없는 동네 어디야", "녹지 부족한 곳 알려줘",
         "어디가 공원이 제일 없어", "녹지 열악한 지역",
@@ -240,6 +242,8 @@ INTENT_CORPUS = {
         "어디가 공원이 없어", "녹지 부족한 동네",
         "공원 없는 곳 어디야", "녹지 최하위 지역",
         "어디가 제일 살기 안 좋아", "녹지 환경 최악인 곳",
+        "녹지 취약 지역 알려줘", "취약 지역 현황",
+        "녹지 부족한 지역 어디야", "공원 제일 없는 곳",
     ],
     "stats_overview": [
         # 직접적 표현
@@ -437,8 +441,12 @@ def classify_intent(question: str) -> tuple[str, float]:
     best_intent = max(intent_scores, key=lambda k: intent_scores[k])
     best_score = intent_scores[best_intent]
 
-    # 유사도가 너무 낮으면 district_detail로 폴백
-    if best_score < 0.03:
+    # 유사도가 너무 낮으면 unknown으로 폴백
+    if best_score < 0.05:
+        return "unknown", best_score
+
+    # 신뢰도가 낮으면 (0.05~0.15) district_detail로 폴백
+    if best_score < 0.15:
         return "district_detail", best_score
 
     return best_intent, best_score
@@ -451,26 +459,25 @@ def extract_mentioned_district(question: str, districts: list[dict]) -> dict | N
     질문에서 지역명 추출 (정확한 이름 + 축약형 모두 지원)
     예: "강남구" → 강남구, "강남" → 강남구, "수원" → 수원시
     """
-    # 1순위: 정확한 지역명 매칭
-    for d in districts:
+    # 1순위: 정확한 지역명 매칭 (긴 이름 우선)
+    sorted_districts = sorted(districts, key=lambda d: len(d.get("district", "")), reverse=True)
+    for d in sorted_districts:
         name = d.get("district", "")
         if name in question:
             return d
 
-    # 2순위: 축약형 매칭 (구/시/군 제거한 이름)
-    for d in districts:
+    # 2순위: 축약형 매칭 (구/시/군 제거한 이름, 긴 것 우선)
+    for d in sorted_districts:
         name = d.get("district", "")
-        # 끝의 행정구역 단위 제거
         short = re.sub(r"(구|시|군)$", "", name)
         if len(short) >= 2 and short in question:
             return d
 
-    # 3순위: 부분 포함 매칭 (2글자 이상)
-    for d in districts:
+    # 3순위: 앞 3글자 이상 매칭 (오탐 방지를 위해 3글자 이상만)
+    for d in sorted_districts:
         name = d.get("district", "")
-        if len(name) >= 3:
-            # 이름의 앞 2글자가 질문에 포함되는지
-            prefix = name[:2]
+        if len(name) >= 4:
+            prefix = name[:3]
             if prefix in question:
                 return d
 
