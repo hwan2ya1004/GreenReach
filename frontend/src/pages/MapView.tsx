@@ -180,9 +180,9 @@ export default function MapView() {
     setShowRoute(false);
 
     try {
-      // 접근성 점수 + 주변 공원 동시 요청
+      // 접근성 점수 (OSM 경로 분석) + 주변 공원 동시 요청
       const [scoreRes, nearbyRes] = await Promise.all([
-        fetch(`${API_BASE}/api/accessibility?lat=${lat}&lng=${lng}`),
+        fetch(`${API_BASE}/api/accessibility/osm?lat=${lat}&lng=${lng}`),
         fetch(`${API_BASE}/api/parks/nearby?lat=${lat}&lng=${lng}&radius=${filter.maxDistance}&limit=20`),
       ]);
 
