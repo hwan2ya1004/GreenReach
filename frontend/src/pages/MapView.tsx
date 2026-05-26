@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { MapContainer, TileLayer, Marker, Popup, Circle, Polyline, useMap, useMapEvents } from 'react-leaflet';
 import L from 'leaflet';
 import { MapPin, Navigation, Filter, TreePine, Clock, Star, Share2, Copy, Check, Route, Loader2, Database, ChevronUp, ChevronDown, Map } from 'lucide-react';
@@ -115,6 +115,13 @@ function MapCenter({ lat, lng }: { lat: number; lng: number }) {
   return null;
 }
 
+// ─── 지도 인스턴스 캡처 ──────────────────────────────────────────────────────
+function MapRefCapture({ mapRef }: { mapRef: React.MutableRefObject<L.Map | null> }) {
+  const map = useMap();
+  useEffect(() => { mapRef.current = map; }, [map, mapRef]);
+  return null;
+}
+
 // ─── OSRM 도보 경로 ───────────────────────────────────────────────────────────
 async function fetchWalkingRoute(
   fromLat: number, fromLng: number,
@@ -161,9 +168,11 @@ export default function MapView() {
   const [routeCoords, setRouteCoords] = useState<[number, number][]>([]);
   const [routeLoading, setRouteLoading] = useState(false);
   const [showRoute, setShowRoute] = useState(false);
+  const [routeParkId, setRouteParkId] = useState<string | null>(null); // 경로 표시 중인 공원 ID
   const [clickMode, setClickMode] = useState(false);
   const [showShare, setShowShare] = useState(false);
   const [copied, setCopied] = useState(false);
+  const mapRef = useRef<L.Map | null>(null); // 지도 인스턴스 참조
 
   // 모바일 탭 상태
   const [mobileTab, setMobileTab] = useState<'map' | 'info'>('map');
@@ -604,6 +613,7 @@ export default function MapView() {
       />
       <MapCenter lat={userLat} lng={userLng} />
       <MapClickHandler onMapClick={handleMapClick} enabled={clickMode} />
+      <MapRefCapture mapRef={mapRef} />
 
       <Marker position={[userLat, userLng]} icon={clickMode ? clickIcon : userIcon}>
         <Popup>
@@ -624,22 +634,57 @@ export default function MapView() {
 
       {visibleParks.map((park) => {
         const isNearest = score?.nearestPark?.id === park.id;
+        const isRouteActive = routeParkId === park.id && showRoute;
         return (
           <Marker key={park.id} position={[park.lat, park.lng]} icon={isNearest ? nearestParkIcon : parkIcon}>
             <Popup>
-              <div className="min-w-[180px]">
-                <div className="font-bold text-sm">{park.name}</div>
-                {isNearest && <div className="text-xs font-semibold text-red-600">📍 가장 가까운 공원</div>}
-                <div className="text-xs text-gray-500">{park.type} · {park.district}</div>
-                {park.area > 0 && <div className="text-xs text-gray-500">면적: {(park.area / 10000).toFixed(1)}ha</div>}
-                <div className="mt-1 flex flex-wrap gap-1">
-                  {park.facilities.slice(0, 3).map(f => (
-                    <span key={f} className="text-xs bg-green-100 text-green-700 px-1 py-0.5 rounded">{f}</span>
-                  ))}
-                </div>
+              <div style={{ minWidth: 200 }}>
+                <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 2 }}>{park.name}</div>
+                {isNearest && <div style={{ fontSize: 11, color: '#dc2626', fontWeight: 600, marginBottom: 2 }}>📍 가장 가까운 공원</div>}
+                <div style={{ fontSize: 11, color: '#6b7280', marginBottom: 2 }}>{park.type} · {park.district}</div>
+                {park.area > 0 && <div style={{ fontSize: 11, color: '#6b7280', marginBottom: 4 }}>면적: {(park.area / 10000).toFixed(1)}ha</div>}
                 {park.walkingDistance && (
-                  <div className="mt-1 text-xs font-semibold text-green-700">도보 {park.walkingTime}분 ({park.walkingDistance}m)</div>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: '#16a34a', marginBottom: 8 }}>
+                    🚶 도보 {park.walkingTime}분 ({park.walkingDistance}m)
+                  </div>
                 )}
+                {/* 액션 버튼 */}
+                <div style={{ display: 'flex', gap: 6, marginTop: 4 }}>
+                  <button
+                    style={{
+                      flex: 1, padding: '6px 0', borderRadius: 8, border: 'none', cursor: 'pointer',
+                      background: isRouteActive ? '#2563eb' : '#eff6ff',
+                      color: isRouteActive ? '#fff' : '#1d4ed8',
+                      fontSize: 11, fontWeight: 600,
+                    }}
+                    onClick={async () => {
+                      // 다른 공원 경로 선택 시 기존 경로 초기화
+                      setRouteCoords([]);
+                      setShowRoute(false);
+                      setRouteParkId(park.id);
+                      setRouteLoading(true);
+                      const coords = await fetchWalkingRoute(userLat, userLng, park.lat, park.lng);
+                      setRouteCoords(coords);
+                      setShowRoute(true);
+                      setRouteLoading(false);
+                    }}
+                  >
+                    {routeLoading && routeParkId === park.id ? '⏳ 계산 중...' : isRouteActive ? '🗺️ 경로 표시 중' : '🗺️ 경로 표시'}
+                  </button>
+                  <button
+                    style={{
+                      flex: 1, padding: '6px 0', borderRadius: 8, border: 'none', cursor: 'pointer',
+                      background: '#f0fdf4', color: '#15803d', fontSize: 11, fontWeight: 600,
+                    }}
+                    onClick={() => {
+                      if (mapRef.current) {
+                        mapRef.current.flyTo([park.lat, park.lng], 17, { animate: true, duration: 0.8 });
+                      }
+                    }}
+                  >
+                    🔍 확대
+                  </button>
+                </div>
               </div>
             </Popup>
           </Marker>
