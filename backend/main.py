@@ -64,6 +64,32 @@ def _get_district_list() -> list[dict]:
     return result
 
 
+def _fix_districts_in_db():
+    """DB의 district 컬럼을 address 기반으로 재파싱하여 업데이트 (잘못 파싱된 데이터 수정)"""
+    try:
+        with engine.connect() as conn:
+            # 전체 레코드의 address를 가져와서 재파싱
+            rows = conn.execute(text("SELECT id, address FROM parks WHERE address IS NOT NULL AND address != ''")).fetchall()
+            updates = []
+            for row in rows:
+                new_district = parse_district(row.address)
+                updates.append({"id": row.id, "district": new_district})
+
+            if updates:
+                # 배치 업데이트
+                BATCH = 2000
+                for i in range(0, len(updates), BATCH):
+                    batch = updates[i:i + BATCH]
+                    conn.execute(
+                        text("UPDATE parks SET district = :district WHERE id = :id"),
+                        batch
+                    )
+                conn.commit()
+                print(f"[GreenReach] ✅ district 재파싱 완료: {len(updates)}개 레코드 업데이트")
+    except Exception as e:
+        print(f"[GreenReach] ⚠️  district 재파싱 실패: {e}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """서버 시작/종료 시 실행"""
@@ -75,6 +101,8 @@ async def lifespan(app: FastAPI):
         print("[GreenReach] ✅ PostgreSQL + PostGIS 연결 성공")
         # 테이블 자동 생성 (없을 경우)
         Base.metadata.create_all(bind=engine)
+        # district 컬럼 재파싱 (주소 파싱 로직 개선 반영)
+        _fix_districts_in_db()
     except Exception as e:
         USE_DB = False
         print(f"[GreenReach] ⚠️  DB 연결 실패 → CSV 폴백 모드: {e}")

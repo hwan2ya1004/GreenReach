@@ -42,29 +42,48 @@ def parse_facilities(row: dict) -> list:
     return facilities[:6]
 
 
+# 전국 시/도 목록 (주소 파싱용)
+SIDO_SET = {
+    "서울특별시", "부산광역시", "대구광역시", "인천광역시", "광주광역시",
+    "대전광역시", "울산광역시", "세종특별자치시",
+    "경기도", "강원도", "강원특별자치도",
+    "충청북도", "충북", "충청남도", "충남",
+    "전라북도", "전북", "전북특별자치도", "전라남도", "전남",
+    "경상북도", "경북", "경상남도", "경남",
+    "제주도", "제주특별자치도",
+}
+
+
 def extract_district(address: str) -> str:
+    """주소에서 시/군/구 단위 지역명 추출 (시/도 기반 계층적 파싱)"""
     if not address:
         return "기타"
     parts = address.split()
-    ADMIN_SUFFIXES = ("광역시", "특별시", "특별자치시", "특별자치도")
-
-    # 1순위: "구" (예: 강남구, 분당구) - 순수 한글 구 이름만 (숫자/특수문자 제외)
-    for part in parts:
-        if (part.endswith("구") and len(part) >= 3 and len(part) <= 10
-                and part.isalpha()
-                and not any(part.endswith(s + "구") for s in ("광역시", "특별시", "특별자치시"))):
-            return part
-    # 2순위: "시" (예: 화성시, 수원시) - 특별시/광역시/특별자치시 제외
-    for part in parts:
-        if (part.endswith("시") and len(part) >= 3 and len(part) <= 10
-                and part.isalpha()
-                and part not in ("특별시", "광역시", "특별자치시", "특별자치도")):
-            return part
-    # 3순위: "군" (예: 양평군, 가평군)
-    for part in parts:
-        if (part.endswith("군") and len(part) >= 3 and len(part) <= 10
-                and part.isalpha()):
-            return part
+    # 1순위: 시/도 다음 토큰을 district로 사용 (가장 정확)
+    for i, part in enumerate(parts):
+        if part in SIDO_SET and i + 1 < len(parts):
+            # 세종특별자치시는 그 자체가 기초자치단체 역할
+            if part == "세종특별자치시":
+                return "세종시"
+            candidate = parts[i + 1]
+            # 구/시/군으로 끝나는 토큰
+            if candidate.endswith(("구", "시", "군")) and len(candidate) >= 2:
+                return candidate
+            # 끝나지 않더라도 다음 토큰이 구/시/군이면 그것을 사용
+            if i + 2 < len(parts) and parts[i + 2].endswith(("구", "시", "군")) and len(parts[i + 2]) >= 2:
+                return parts[i + 2]
+            return candidate
+    # 2순위: 주소에서 구/시/군으로 끝나는 단어 탐색 (기존 방식 폴백)
+    for p in parts:
+        if p.endswith("구") and 2 <= len(p) <= 6 and p.isalpha():
+            return p
+    for p in parts:
+        if (p.endswith("시") and 2 <= len(p) <= 8 and p.isalpha()
+                and p not in ("특별시", "광역시", "특별자치시")):
+            return p
+    for p in parts:
+        if p.endswith("군") and 2 <= len(p) <= 6 and p.isalpha():
+            return p
     return "기타"
 
 
