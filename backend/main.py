@@ -40,7 +40,7 @@ def _get_district_list() -> list[dict]:
     ADMIN_SUFFIXES = ("광역시", "특별시", "특별자치시", "특별자치도")
     for p in parks:
         d = p["district"]
-        if d == "기타" or len(d) < 3:
+        if d == "기타" or len(d) < 2:
             continue
         if any(c.isdigit() or c == '-' for c in d):
             continue
@@ -48,7 +48,7 @@ def _get_district_list() -> list[dict]:
             continue
         ends_with_admin = any(d.endswith(s) for s in ADMIN_SUFFIXES)
         has_admin_in_middle = any(keyword in d for keyword in ADMIN_SUFFIXES) and not ends_with_admin
-        if has_admin_in_middle or len(d) > 10:
+        if has_admin_in_middle:
             continue
         if d not in stats:
             stats[d] = {"district": d, "parkCount": 0, "totalArea": 0.0}
@@ -119,6 +119,49 @@ PARK_TYPE_MAP = {
 _csv_cache: list[dict] | None = None
 
 
+# 전국 시/도 목록 (주소 파싱용)
+SIDO_SET = {
+    "서울특별시", "부산광역시", "대구광역시", "인천광역시", "광주광역시",
+    "대전광역시", "울산광역시", "세종특별자치시",
+    "경기도", "강원도", "강원특별자치도",
+    "충청북도", "충북", "충청남도", "충남",
+    "전라북도", "전북", "전북특별자치도", "전라남도", "전남",
+    "경상북도", "경북", "경상남도", "경남",
+    "제주도", "제주특별자치도",
+}
+
+
+def parse_district(address: str) -> str:
+    """주소에서 시/군/구 단위 지역명 추출 (시/도 기반 계층적 파싱)"""
+    parts = address.split()
+    # 1순위: 시/도 다음 토큰을 district로 사용 (가장 정확)
+    for i, part in enumerate(parts):
+        if part in SIDO_SET and i + 1 < len(parts):
+            candidate = parts[i + 1]
+            # 세종특별자치시는 그 자체가 기초자치단체 역할
+            if part == "세종특별자치시":
+                return "세종시"
+            # 구/시/군으로 끝나는 토큰
+            if candidate.endswith(("구", "시", "군")) and len(candidate) >= 2:
+                return candidate
+            # 끝나지 않더라도 다음 토큰이 구/시/군이면 그것을 사용
+            if i + 2 < len(parts) and parts[i + 2].endswith(("구", "시", "군")) and len(parts[i + 2]) >= 2:
+                return parts[i + 2]
+            return candidate
+    # 2순위: 주소에서 구/시/군으로 끝나는 단어 탐색 (기존 방식 폴백)
+    for p in parts:
+        if p.endswith("구") and 2 <= len(p) <= 6:
+            return p
+    for p in parts:
+        if (p.endswith("시") and 2 <= len(p) <= 8
+                and p not in ("특별시", "광역시", "특별자치시")):
+            return p
+    for p in parts:
+        if p.endswith("군") and 2 <= len(p) <= 6:
+            return p
+    return "기타"
+
+
 def load_csv_fallback() -> list[dict]:
     global _csv_cache
     if _csv_cache is not None:
@@ -138,18 +181,7 @@ def load_csv_fallback() -> list[dict]:
                     if not name:
                         continue
                     address = (row.get("소재지도로명주소") or row.get("소재지지번주소") or "").strip()
-                    parts = address.split()
-                    district = next(
-                        (p for p in parts if p.endswith("구") and len(p) >= 3),
-                        next(
-                            (p for p in parts if p.endswith("시") and len(p) >= 3
-                             and p not in ("특별시", "광역시", "특별자치시", "특별자치도")),
-                            next(
-                                (p for p in parts if p.endswith("군") and len(p) >= 3),
-                                "기타"
-                            )
-                        )
-                    )
+                    district = parse_district(address)
                     park_type = PARK_TYPE_MAP.get(row.get("공원구분", "").strip(), "기타")
                     try:
                         area = float(row.get("공원면적", "0").strip() or "0")
@@ -523,16 +555,11 @@ def get_district_stats(db: Session = Depends(get_db)):
             continue
         if not d.endswith(("구", "시", "군")):
             continue
-        # 주소 파싱 실패로 광역시명+구명이 붙은 경우만 제외 (예: "인천광역시연수구", "대전광역시서구")
-        # 이름이 "광역시", "특별시", "특별자치시", "특별자치도"로 끝나지 않으면서
-        # 이름 중간에 해당 키워드가 포함된 경우 = 파싱 오류
+        # 주소 파싱 실패로 광역시명+구명이 붙은 경우만 제외 (parse_district()가 정규화하므로 거의 없음)
         ADMIN_SUFFIXES = ("광역시", "특별시", "특별자치시", "특별자치도")
         ends_with_admin = any(d.endswith(s) for s in ADMIN_SUFFIXES)
         has_admin_in_middle = any(keyword in d for keyword in ADMIN_SUFFIXES) and not ends_with_admin
         if has_admin_in_middle:
-            continue
-        # 너무 긴 이름 제외 (세종특별자치시 7자, 정상 이름은 보통 10자 이하)
-        if len(d) > 10:
             continue
         if d not in stats:
             stats[d] = {"district": d, "parkCount": 0, "totalArea": 0.0}
