@@ -94,18 +94,24 @@ def _fix_districts_in_db():
 async def lifespan(app: FastAPI):
     """서버 시작/종료 시 실행"""
     global USE_DB
+    # 1. DB 연결 확인
     try:
         with engine.connect() as conn:
             conn.execute(text("SELECT 1"))
         USE_DB = True
         print("[GreenReach] ✅ PostgreSQL + PostGIS 연결 성공")
-        # 테이블 자동 생성 (없을 경우)
-        Base.metadata.create_all(bind=engine)
-        # district 컬럼 재파싱 (주소 파싱 로직 개선 반영)
-        _fix_districts_in_db()
     except Exception as e:
         USE_DB = False
         print(f"[GreenReach] ⚠️  DB 연결 실패 → CSV 폴백 모드: {e}")
+
+    # 2. 테이블 생성 및 district 재파싱 (DB 연결 성공 시)
+    if USE_DB:
+        try:
+            Base.metadata.create_all(bind=engine)
+        except Exception as e:
+            print(f"[GreenReach] ⚠️  테이블 생성 실패: {e}")
+        # district 컬럼 재파싱 (주소 파싱 로직 개선 반영)
+        _fix_districts_in_db()
 
     # ML 모델 초기화 (scikit-learn)
     try:
