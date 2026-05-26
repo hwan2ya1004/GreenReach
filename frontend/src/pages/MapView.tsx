@@ -1,14 +1,14 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { MapContainer, TileLayer, Marker, Popup, Circle, Polyline, useMap, useMapEvents } from 'react-leaflet';
 import L from 'leaflet';
-import { MapPin, Navigation, Filter, X, TreePine, Clock, Star, Share2, Copy, Check, Route, Loader2, Database } from 'lucide-react';
+import { MapPin, Navigation, Filter, X, TreePine, Clock, Star, Share2, Copy, Check, Route, Loader2, Database, ChevronUp, ChevronDown, Map } from 'lucide-react';
 import { getScoreColor, getGradeDescription } from '../utils/accessibility';
 import type { RecommendationFilter } from '../types';
 
 // ─── VWorld API 키 ────────────────────────────────────────────────────────────
 const VWORLD_KEY = '4B826FAE-56F2-32CB-829B-2CD7F7DFF7E7';
 
-// ─── 백엔드 API URL (환경변수 우선, 없으면 로컬)
+// ─── 백엔드 API URL
 const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
 
 // ─── 타입 정의 ────────────────────────────────────────────────────────────────
@@ -28,7 +28,6 @@ interface Park {
   manager?: string;
   phone?: string;
   dataDate?: string;
-  // 주변 공원 조회 시 추가 필드
   straightDistance?: number;
   walkingDistance?: number;
   walkingTime?: number;
@@ -129,6 +128,14 @@ async function fetchWalkingRoute(
 const DEFAULT_LAT = 37.5665;
 const DEFAULT_LNG = 126.9780;
 
+// ─── 모바일 하단 패널 높이 단계 ──────────────────────────────────────────────
+type PanelSnap = 'peek' | 'half' | 'full';
+const PANEL_HEIGHTS: Record<PanelSnap, string> = {
+  peek: '120px',   // 점수 카드만 살짝 보임
+  half: '50vh',    // 절반
+  full: '85vh',    // 거의 전체
+};
+
 // ─── 메인 컴포넌트 ────────────────────────────────────────────────────────────
 export default function MapView() {
   const [userLat, setUserLat] = useState(DEFAULT_LAT);
@@ -136,14 +143,12 @@ export default function MapView() {
   const [locationLoading, setLocationLoading] = useState(false);
   const [locationError, setLocationError] = useState('');
 
-  // 백엔드 API 상태
   const [score, setScore] = useState<AccessibilityResult | null>(null);
   const [nearbyParks, setNearbyParks] = useState<Park[]>([]);
   const [apiLoading, setApiLoading] = useState(false);
   const [apiError, setApiError] = useState('');
   const [backendOnline, setBackendOnline] = useState<boolean | null>(null);
 
-  // 필터
   const [showFilter, setShowFilter] = useState(false);
   const [filter, setFilter] = useState<RecommendationFilter>({
     childFriendly: false,
@@ -152,17 +157,19 @@ export default function MapView() {
     maxDistance: 2000,
   });
 
-  // 경로
   const [routeCoords, setRouteCoords] = useState<[number, number][]>([]);
   const [routeLoading, setRouteLoading] = useState(false);
   const [showRoute, setShowRoute] = useState(false);
-
-  // 클릭 모드
   const [clickMode, setClickMode] = useState(false);
-
-  // 공유
   const [showShare, setShowShare] = useState(false);
   const [copied, setCopied] = useState(false);
+
+  // 모바일 패널 상태
+  const [panelSnap, setPanelSnap] = useState<PanelSnap>('peek');
+  const [mobileTab, setMobileTab] = useState<'map' | 'info'>('map');
+  const panelRef = useRef<HTMLDivElement>(null);
+  const dragStartY = useRef<number>(0);
+  const dragStartSnap = useRef<PanelSnap>('peek');
 
   // 백엔드 상태 확인
   useEffect(() => {
@@ -172,7 +179,6 @@ export default function MapView() {
       .catch(() => setBackendOnline(false));
   }, []);
 
-  // 위치 기반 분석 (백엔드 API 호출)
   const analyzeLocation = useCallback(async (lat: number, lng: number) => {
     setApiLoading(true);
     setApiError('');
@@ -180,7 +186,6 @@ export default function MapView() {
     setShowRoute(false);
 
     try {
-      // 접근성 점수 (OSM 경로 분석) + 주변 공원 동시 요청
       const [scoreRes, nearbyRes] = await Promise.all([
         fetch(`${API_BASE}/api/accessibility/osm?lat=${lat}&lng=${lng}`),
         fetch(`${API_BASE}/api/parks/nearby?lat=${lat}&lng=${lng}&radius=${filter.maxDistance}&limit=20`),
@@ -196,9 +201,10 @@ export default function MapView() {
         setScore(null);
       } else {
         setScore(scoreData);
+        // 분석 완료 시 모바일 패널 살짝 올리기
+        setPanelSnap('half');
       }
 
-      // 필터 적용
       let parks: Park[] = nearbyData.parks || [];
       if (filter.childFriendly) parks = parks.filter(p => p.childFriendly);
       if (filter.petFriendly) parks = parks.filter(p => p.petFriendly);
@@ -206,7 +212,7 @@ export default function MapView() {
       setNearbyParks(parks);
 
     } catch {
-      setApiError('백엔드 서버에 연결할 수 없습니다. 서버를 실행해주세요.');
+      setApiError('서버에 연결할 수 없습니다.');
       setScore(null);
       setNearbyParks([]);
     } finally {
@@ -223,7 +229,7 @@ export default function MapView() {
     setLocationError('');
     setClickMode(false);
     if (!navigator.geolocation) {
-      setLocationError('이 브라우저는 위치 정보를 지원하지 않습니다.');
+      setLocationError('위치 정보를 지원하지 않습니다.');
       setLocationLoading(false);
       return;
     }
@@ -234,7 +240,7 @@ export default function MapView() {
         setLocationLoading(false);
       },
       () => {
-        setLocationError('위치 정보를 가져올 수 없습니다. 지도를 클릭하여 위치를 선택하세요.');
+        setLocationError('위치를 가져올 수 없습니다. 지도를 클릭하세요.');
         setLocationLoading(false);
         setClickMode(true);
       }
@@ -261,7 +267,6 @@ export default function MapView() {
     setRouteLoading(false);
   };
 
-  // SNS 공유
   const shareText = score
     ? `🌿 우리 동네 녹지 접근성 점수: ${score.score}점 (${score.grade}등급)\n가장 가까운 공원: ${score.nearestPark.name} (도보 ${score.walkingTime}분)\n\n#GreenReach #그린리치 #녹지접근성`
     : '';
@@ -278,420 +283,536 @@ export default function MapView() {
   };
 
   const scoreColor = score ? getScoreColor(score.score) : '#16a34a';
-
-  // 지도에 표시할 공원 (5km 이내)
   const visibleParks = nearbyParks.filter(p => (p.straightDistance ?? 0) <= 5000);
 
-  return (
-    <div className="flex flex-col lg:flex-row h-[calc(100vh-64px)]">
-      {/* ── 사이드패널 ── */}
-      <div className="w-full lg:w-96 bg-white border-r border-gray-200 overflow-y-auto flex-shrink-0">
+  // ─── 드래그 핸들러 (모바일 패널) ─────────────────────────────────────────
+  const handleDragStart = (e: React.TouchEvent) => {
+    dragStartY.current = e.touches[0].clientY;
+    dragStartSnap.current = panelSnap;
+  };
 
-        {/* 백엔드 상태 배지 */}
-        <div className="px-4 pt-3 pb-0">
-          <div className={`flex items-center gap-2 text-xs px-3 py-1.5 rounded-full w-fit ${
-            backendOnline === null ? 'bg-gray-100 text-gray-500' :
-            backendOnline ? 'bg-green-50 text-green-700 border border-green-200' :
-            'bg-red-50 text-red-600 border border-red-200'
-          }`}>
-            <Database className="w-3 h-3" />
-            {backendOnline === null ? '서버 확인 중...' :
-             backendOnline ? '공공데이터 API 연결됨 (전국 공원 18,375개)' :
-             '백엔드 서버 오프라인'}
-          </div>
+  const handleDragEnd = (e: React.TouchEvent) => {
+    const deltaY = dragStartY.current - e.changedTouches[0].clientY;
+    if (deltaY > 60) {
+      // 위로 스와이프
+      if (dragStartSnap.current === 'peek') setPanelSnap('half');
+      else if (dragStartSnap.current === 'half') setPanelSnap('full');
+    } else if (deltaY < -60) {
+      // 아래로 스와이프
+      if (dragStartSnap.current === 'full') setPanelSnap('half');
+      else if (dragStartSnap.current === 'half') setPanelSnap('peek');
+    }
+  };
+
+  // ─── 공통 패널 내용 ──────────────────────────────────────────────────────
+  const PanelContent = () => (
+    <>
+      {/* 백엔드 상태 배지 */}
+      <div className="px-4 pt-3 pb-0">
+        <div className={`flex items-center gap-2 text-xs px-3 py-1.5 rounded-full w-fit ${
+          backendOnline === null ? 'bg-gray-100 text-gray-500' :
+          backendOnline ? 'bg-green-50 text-green-700 border border-green-200' :
+          'bg-red-50 text-red-600 border border-red-200'
+        }`}>
+          <Database className="w-3 h-3" />
+          {backendOnline === null ? '서버 확인 중...' :
+           backendOnline ? '공공데이터 연결됨 (전국 공원 16,999개)' :
+           '서버 오프라인'}
         </div>
+      </div>
 
-        {/* 위치 버튼 */}
-        <div className="p-4 border-b border-gray-100 space-y-2">
+      {/* 위치 버튼 */}
+      <div className="p-4 border-b border-gray-100 space-y-2">
+        <div className="flex gap-2">
           <button
             onClick={getMyLocation}
             disabled={locationLoading || apiLoading}
-            className="w-full flex items-center justify-center gap-2 bg-green-600 hover:bg-green-700 disabled:bg-green-400 text-white font-semibold py-3 px-4 rounded-xl transition-colors"
+            className="flex-1 flex items-center justify-center gap-2 bg-green-600 hover:bg-green-700 active:bg-green-800 disabled:bg-green-400 text-white font-semibold py-3 px-3 rounded-xl transition-colors text-sm"
           >
             {locationLoading || apiLoading
-              ? <Loader2 className="w-4 h-4 animate-spin" />
-              : <Navigation className="w-4 h-4" />}
-            {locationLoading ? '위치 확인 중...' : apiLoading ? '분석 중...' : 'GPS로 내 위치 분석'}
+              ? <Loader2 className="w-4 h-4 animate-spin flex-shrink-0" />
+              : <Navigation className="w-4 h-4 flex-shrink-0" />}
+            <span className="truncate">
+              {locationLoading ? '위치 확인 중...' : apiLoading ? '분석 중...' : 'GPS 위치 분석'}
+            </span>
           </button>
           <button
             onClick={() => { setClickMode(!clickMode); setLocationError(''); }}
-            className={`w-full flex items-center justify-center gap-2 font-semibold py-2.5 px-4 rounded-xl transition-colors border text-sm ${
+            className={`flex items-center justify-center gap-1.5 font-semibold py-3 px-3 rounded-xl transition-colors border text-sm flex-shrink-0 ${
               clickMode
                 ? 'bg-purple-600 text-white border-purple-600'
-                : 'bg-white text-purple-700 border-purple-300 hover:bg-purple-50'
+                : 'bg-white text-purple-700 border-purple-300 hover:bg-purple-50 active:bg-purple-100'
             }`}
           >
             <MapPin className="w-4 h-4" />
-            {clickMode ? '🖱️ 지도를 클릭하세요!' : '지도 클릭으로 위치 선택'}
+            <span className="hidden sm:inline">{clickMode ? '클릭하세요!' : '지도 클릭'}</span>
           </button>
-          {locationError && <p className="text-xs text-orange-600 text-center">{locationError}</p>}
-          {apiError && <p className="text-xs text-red-600 text-center">{apiError}</p>}
-          <p className="text-xs text-gray-400 text-center">
-            📍 {userLat.toFixed(4)}, {userLng.toFixed(4)}
-          </p>
         </div>
+        {locationError && <p className="text-xs text-orange-600 text-center">{locationError}</p>}
+        {apiError && <p className="text-xs text-red-600 text-center">{apiError}</p>}
+        <p className="text-xs text-gray-400 text-center">
+          📍 {userLat.toFixed(4)}, {userLng.toFixed(4)}
+        </p>
+      </div>
 
-        {/* 접근성 점수 카드 */}
-        {score && !score.error && (
-          <div className="p-4 border-b border-gray-100">
-            <h2 className="font-bold text-gray-800 mb-3 flex items-center gap-2">
-              <Star className="w-4 h-4 text-yellow-500" />
-              녹지 접근성 점수
-              <span className="text-xs text-gray-400 font-normal ml-auto">공공데이터 기반</span>
-            </h2>
-            <div className="flex items-center gap-4 mb-4">
-              <div
-                className="w-20 h-20 rounded-full flex items-center justify-center flex-shrink-0 shadow-lg"
-                style={{ background: `conic-gradient(${scoreColor} ${score.score * 3.6}deg, #e5e7eb 0deg)` }}
-              >
-                <div className="w-16 h-16 rounded-full flex flex-col items-center justify-center" style={{ background: scoreColor }}>
-                  <span className="text-2xl font-bold text-white">{score.score}</span>
-                  <span className="text-xs text-white opacity-80">/ 100</span>
-                </div>
-              </div>
-              <div>
-                <div className="text-2xl font-bold" style={{ color: scoreColor }}>{score.grade}등급</div>
-                <div className="text-sm text-gray-600 mt-1">{getGradeDescription(score.grade)}</div>
+      {/* 접근성 점수 카드 */}
+      {score && !score.error && (
+        <div className="p-4 border-b border-gray-100">
+          <h2 className="font-bold text-gray-800 mb-3 flex items-center gap-2 text-sm">
+            <Star className="w-4 h-4 text-yellow-500" />
+            녹지 접근성 점수
+            <span className="text-xs text-gray-400 font-normal ml-auto">공공데이터 기반</span>
+          </h2>
+
+          {/* 점수 + 등급 가로 배치 */}
+          <div className="flex items-center gap-4 mb-4">
+            <div
+              className="w-18 h-18 rounded-full flex items-center justify-center flex-shrink-0 shadow-lg"
+              style={{
+                width: 72, height: 72,
+                background: `conic-gradient(${scoreColor} ${score.score * 3.6}deg, #e5e7eb 0deg)`
+              }}
+            >
+              <div className="rounded-full flex flex-col items-center justify-center" style={{ width: 58, height: 58, background: scoreColor }}>
+                <span className="text-xl font-bold text-white leading-none">{score.score}</span>
+                <span className="text-xs text-white opacity-80">/ 100</span>
               </div>
             </div>
-
-            {/* 점수 세부 분석 */}
-            <div className="bg-gray-50 rounded-xl p-3 mb-3 space-y-1.5">
-              <div className="text-xs font-semibold text-gray-600 mb-2">점수 구성</div>
-              {[
-                { label: '거리 점수', value: score.distScore, max: 50, color: '#16a34a' },
-                { label: '밀도 점수', value: score.densityScore, max: 30, color: '#2563eb' },
-                { label: '면적 점수', value: score.areaScore, max: 20, color: '#d97706' },
-              ].map(({ label, value, max, color }) => (
-                <div key={label} className="flex items-center gap-2">
-                  <span className="text-xs text-gray-500 w-20 flex-shrink-0">{label}</span>
-                  <div className="flex-1 bg-gray-200 rounded-full h-1.5">
-                    <div className="h-1.5 rounded-full" style={{ width: `${(value / max) * 100}%`, background: color }} />
-                  </div>
-                  <span className="text-xs font-semibold text-gray-700 w-10 text-right">{value}/{max}</span>
-                </div>
-              ))}
-            </div>
-
-            <div className="grid grid-cols-2 gap-2 mb-3">
-              <div className="bg-gray-50 rounded-lg p-2.5">
-                <div className="text-xs text-gray-500 mb-0.5">가장 가까운 공원</div>
-                <div className="font-semibold text-sm text-gray-800 truncate">{score.nearestPark.name}</div>
-                <div className="text-xs text-gray-500">{score.nearestPark.type}</div>
-              </div>
-              <div className="bg-gray-50 rounded-lg p-2.5">
-                <div className="text-xs text-gray-500 mb-0.5">도보 거리</div>
-                <div className="font-semibold text-sm text-gray-800">
-                  {score.walkingDistance >= 1000
-                    ? `${(score.walkingDistance / 1000).toFixed(1)}km`
-                    : `${score.walkingDistance}m`}
-                </div>
-                <div className="text-xs text-gray-500">약 {score.walkingTime}분 소요</div>
-              </div>
-              <div className="bg-green-50 rounded-lg p-2.5">
-                <div className="text-xs text-gray-500 mb-0.5">500m 내 공원</div>
-                <div className="font-semibold text-sm text-green-700">{score.parkCount500m}개</div>
-              </div>
-              <div className="bg-blue-50 rounded-lg p-2.5">
-                <div className="text-xs text-gray-500 mb-0.5">1km 내 공원</div>
-                <div className="font-semibold text-sm text-blue-700">{score.parkCount1km}개</div>
+            <div className="flex-1 min-w-0">
+              <div className="text-2xl font-bold" style={{ color: scoreColor }}>{score.grade}등급</div>
+              <div className="text-xs text-gray-600 mt-0.5">{getGradeDescription(score.grade)}</div>
+              <div className="text-xs text-gray-500 mt-1 truncate">
+                📍 {score.nearestPark.name} · 도보 {score.walkingTime}분
               </div>
             </div>
+          </div>
 
-            {/* 경사도 정보 (OSM 분석 결과) */}
-            {score.slopePenalty !== undefined && score.slopePenalty > 1.0 && (
-              <div className="bg-orange-50 border border-orange-200 rounded-xl p-3 mb-3">
-                <div className="text-xs font-semibold text-orange-700 mb-1.5 flex items-center gap-1">
-                  ⛰️ 경사도 분석 결과
+          {/* 점수 바 */}
+          <div className="bg-gray-50 rounded-xl p-3 mb-3 space-y-1.5">
+            {[
+              { label: '거리', value: score.distScore, max: 50, color: '#16a34a' },
+              { label: '밀도', value: score.densityScore, max: 30, color: '#2563eb' },
+              { label: '면적', value: score.areaScore, max: 20, color: '#d97706' },
+            ].map(({ label, value, max, color }) => (
+              <div key={label} className="flex items-center gap-2">
+                <span className="text-xs text-gray-500 w-8 flex-shrink-0">{label}</span>
+                <div className="flex-1 bg-gray-200 rounded-full h-2">
+                  <div className="h-2 rounded-full transition-all duration-500" style={{ width: `${(value / max) * 100}%`, background: color }} />
                 </div>
-                <div className="grid grid-cols-2 gap-2 text-xs">
-                  <div>
-                    <span className="text-gray-500">경사 패널티</span>
-                    <div className="font-semibold text-orange-700">×{score.slopePenalty.toFixed(1)}</div>
-                  </div>
-                  <div>
-                    <span className="text-gray-500">경사 반영 시간</span>
-                    <div className="font-semibold text-orange-700">{score.slopeAdjustedTime}분</div>
-                  </div>
-                  {(score.elevationGain ?? 0) > 0 && (
-                    <div>
-                      <span className="text-gray-500">오르막</span>
-                      <div className="font-semibold text-red-600">↑{score.elevationGain}m</div>
-                    </div>
-                  )}
-                  {(score.elevationLoss ?? 0) > 0 && (
-                    <div>
-                      <span className="text-gray-500">내리막</span>
-                      <div className="font-semibold text-blue-600">↓{score.elevationLoss}m</div>
-                    </div>
-                  )}
-                </div>
-                <div className="text-xs text-orange-600 mt-1.5">
-                  ⚠️ 언덕이 있어 실제 보행 시간이 더 걸립니다
-                </div>
+                <span className="text-xs font-semibold text-gray-700 w-10 text-right">{value}/{max}</span>
               </div>
-            )}
+            ))}
+          </div>
 
-            {/* 경로 버튼 */}
+          {/* 통계 그리드 */}
+          <div className="grid grid-cols-2 gap-2 mb-3">
+            <div className="bg-gray-50 rounded-lg p-2.5">
+              <div className="text-xs text-gray-500 mb-0.5">가장 가까운 공원</div>
+              <div className="font-semibold text-sm text-gray-800 truncate">{score.nearestPark.name}</div>
+              <div className="text-xs text-gray-500">{score.nearestPark.type}</div>
+            </div>
+            <div className="bg-gray-50 rounded-lg p-2.5">
+              <div className="text-xs text-gray-500 mb-0.5">도보 거리</div>
+              <div className="font-semibold text-sm text-gray-800">
+                {score.walkingDistance >= 1000
+                  ? `${(score.walkingDistance / 1000).toFixed(1)}km`
+                  : `${score.walkingDistance}m`}
+              </div>
+              <div className="text-xs text-gray-500">약 {score.walkingTime}분</div>
+            </div>
+            <div className="bg-green-50 rounded-lg p-2.5">
+              <div className="text-xs text-gray-500 mb-0.5">500m 내 공원</div>
+              <div className="font-semibold text-sm text-green-700">{score.parkCount500m}개</div>
+            </div>
+            <div className="bg-blue-50 rounded-lg p-2.5">
+              <div className="text-xs text-gray-500 mb-0.5">1km 내 공원</div>
+              <div className="font-semibold text-sm text-blue-700">{score.parkCount1km}개</div>
+            </div>
+          </div>
+
+          {/* 경사도 정보 */}
+          {score.slopePenalty !== undefined && score.slopePenalty > 1.0 && (
+            <div className="bg-orange-50 border border-orange-200 rounded-xl p-3 mb-3">
+              <div className="text-xs font-semibold text-orange-700 mb-1.5">⛰️ 경사도 분석</div>
+              <div className="grid grid-cols-2 gap-2 text-xs">
+                <div>
+                  <span className="text-gray-500">경사 패널티</span>
+                  <div className="font-semibold text-orange-700">×{score.slopePenalty.toFixed(1)}</div>
+                </div>
+                <div>
+                  <span className="text-gray-500">경사 반영 시간</span>
+                  <div className="font-semibold text-orange-700">{score.slopeAdjustedTime}분</div>
+                </div>
+                {(score.elevationGain ?? 0) > 0 && (
+                  <div><span className="text-gray-500">오르막</span><div className="font-semibold text-red-600">↑{score.elevationGain}m</div></div>
+                )}
+                {(score.elevationLoss ?? 0) > 0 && (
+                  <div><span className="text-gray-500">내리막</span><div className="font-semibold text-blue-600">↓{score.elevationLoss}m</div></div>
+                )}
+              </div>
+              <div className="text-xs text-orange-600 mt-1.5">⚠️ 언덕이 있어 실제 보행 시간이 더 걸립니다</div>
+            </div>
+          )}
+
+          {/* 액션 버튼 */}
+          <div className="flex gap-2">
             <button
               onClick={handleShowRoute}
               disabled={routeLoading}
-              className={`w-full flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-semibold transition-colors mb-2 ${
+              className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl text-xs font-semibold transition-colors ${
                 showRoute ? 'bg-blue-600 text-white' : 'bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200'
               }`}
             >
-              {routeLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Route className="w-4 h-4" />}
-              {routeLoading ? '경로 계산 중...' : showRoute ? '✓ 실제 도보 경로 표시 중' : '실제 도보 경로 보기 (OSM)'}
+              {routeLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Route className="w-3.5 h-3.5" />}
+              {routeLoading ? '계산 중...' : showRoute ? '경로 표시 중' : '도보 경로'}
             </button>
-
-            {/* 공유 버튼 */}
             <button
               onClick={() => setShowShare(!showShare)}
-              className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-semibold bg-green-50 text-green-700 hover:bg-green-100 border border-green-200 transition-colors"
+              className="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl text-xs font-semibold bg-green-50 text-green-700 hover:bg-green-100 border border-green-200 transition-colors"
             >
-              <Share2 className="w-4 h-4" />
-              우리 동네 점수 공유하기
+              <Share2 className="w-3.5 h-3.5" />
+              공유하기
             </button>
+          </div>
 
-            {showShare && (
-              <div className="mt-2 bg-gray-50 rounded-xl p-3 space-y-2">
-                <p className="text-xs text-gray-600 whitespace-pre-line leading-relaxed">{shareText}</p>
-                <div className="flex gap-2">
-                  <button onClick={handleCopyLink} className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-semibold bg-gray-200 hover:bg-gray-300 text-gray-700 transition-colors">
-                    {copied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
-                    {copied ? '복사됨!' : '텍스트 복사'}
-                  </button>
-                  <button onClick={handleShareTwitter} className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-semibold bg-sky-500 hover:bg-sky-600 text-white transition-colors">
-                    <Share2 className="w-3 h-3" />
-                    트위터 공유
-                  </button>
+          {showShare && (
+            <div className="mt-2 bg-gray-50 rounded-xl p-3 space-y-2">
+              <p className="text-xs text-gray-600 whitespace-pre-line leading-relaxed">{shareText}</p>
+              <div className="flex gap-2">
+                <button onClick={handleCopyLink} className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-semibold bg-gray-200 hover:bg-gray-300 text-gray-700 transition-colors">
+                  {copied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+                  {copied ? '복사됨!' : '복사'}
+                </button>
+                <button onClick={handleShareTwitter} className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-semibold bg-sky-500 hover:bg-sky-600 text-white transition-colors">
+                  <Share2 className="w-3 h-3" />
+                  트위터
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* 필터 */}
+      <div className="p-4 border-b border-gray-100">
+        <button
+          onClick={() => setShowFilter(!showFilter)}
+          className="flex items-center gap-2 text-sm font-medium text-gray-700 hover:text-green-700 w-full"
+        >
+          <Filter className="w-4 h-4" />
+          맞춤 공원 필터
+          {showFilter ? <ChevronUp className="w-4 h-4 ml-auto" /> : <ChevronDown className="w-4 h-4 ml-auto" />}
+        </button>
+        {showFilter && (
+          <div className="mt-3 space-y-3">
+            {[
+              { key: 'childFriendly', label: '👶 아이 동반 가능' },
+              { key: 'petFriendly', label: '🐕 반려동물 동반 가능' },
+              { key: 'accessible', label: '♿ 장애인 접근 가능' },
+            ].map(({ key, label }) => (
+              <label key={key} className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={filter[key as keyof RecommendationFilter] as boolean}
+                  onChange={(e) => setFilter({ ...filter, [key]: e.target.checked })}
+                  className="rounded text-green-600 w-4 h-4"
+                />
+                {label}
+              </label>
+            ))}
+            <div>
+              <label className="text-sm text-gray-700">최대 거리: {filter.maxDistance}m</label>
+              <input
+                type="range" min={500} max={5000} step={500}
+                value={filter.maxDistance}
+                onChange={(e) => setFilter({ ...filter, maxDistance: Number(e.target.value) })}
+                className="w-full mt-1 accent-green-600"
+              />
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* 주변 공원 목록 */}
+      <div className="p-4">
+        <h3 className="font-bold text-gray-800 mb-3 flex items-center gap-2 text-sm">
+          <TreePine className="w-4 h-4 text-green-600" />
+          주변 공원 목록
+          <span className="text-xs text-gray-400 font-normal ml-auto">{nearbyParks.length}개</span>
+        </h3>
+
+        {apiLoading ? (
+          <div className="flex items-center justify-center py-8 gap-2 text-gray-400">
+            <Loader2 className="w-5 h-5 animate-spin" />
+            <span className="text-sm">공공데이터 불러오는 중...</span>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {nearbyParks.length === 0 ? (
+              <p className="text-sm text-gray-500 text-center py-4">
+                {apiError ? '서버 연결 오류' : '조건에 맞는 공원이 없습니다'}
+              </p>
+            ) : (
+              nearbyParks.map((park) => (
+                <div key={park.id} className="bg-gray-50 hover:bg-green-50 active:bg-green-100 rounded-lg p-3 cursor-pointer transition-colors border border-transparent hover:border-green-200">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex-1 min-w-0">
+                      <div className="font-medium text-sm text-gray-800 truncate">{park.name}</div>
+                      <div className="text-xs text-gray-500 mt-0.5">{park.type} · {park.district}</div>
+                      <div className="flex flex-wrap gap-1 mt-1">
+                        {park.childFriendly && <span className="text-xs bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded">👶</span>}
+                        {park.petFriendly && <span className="text-xs bg-orange-100 text-orange-700 px-1.5 py-0.5 rounded">🐕</span>}
+                        {park.accessible && <span className="text-xs bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded">♿</span>}
+                        {park.facilities.slice(0, 2).map(f => (
+                          <span key={f} className="text-xs bg-green-100 text-green-700 px-1.5 py-0.5 rounded">{f}</span>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="text-right flex-shrink-0">
+                      <div className="text-sm font-semibold text-green-700">
+                        {(park.walkingDistance ?? 0) >= 1000
+                          ? `${((park.walkingDistance ?? 0) / 1000).toFixed(1)}km`
+                          : `${park.walkingDistance ?? 0}m`}
+                      </div>
+                      <div className="text-xs text-gray-500 flex items-center gap-1 justify-end">
+                        <Clock className="w-3 h-3" />{park.walkingTime ?? 0}분
+                      </div>
+                      {park.area > 0 && (
+                        <div className="text-xs text-gray-400">{(park.area / 10000).toFixed(1)}ha</div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        )}
+
+        <div className="mt-4 pt-3 border-t border-gray-100 text-xs text-gray-400 space-y-0.5">
+          <p className="font-medium text-gray-500">📊 데이터 출처</p>
+          <p>· 공원: 공공데이터포털 (data.go.kr)</p>
+          <p>· 지도: VWorld (LX한국국토정보공사)</p>
+          <p>· 경로: OSRM (project-osrm.org)</p>
+        </div>
+      </div>
+    </>
+  );
+
+  // ─── 지도 컴포넌트 ────────────────────────────────────────────────────────
+  const MapComponent = () => (
+    <MapContainer
+      center={[userLat, userLng]}
+      zoom={14}
+      style={{ width: '100%', height: '100%', cursor: clickMode ? 'crosshair' : 'grab' }}
+    >
+      <TileLayer
+        attribution='&copy; <a href="https://www.vworld.kr" target="_blank">VWorld</a>'
+        url={`https://api.vworld.kr/req/wmts/1.0.0/${VWORLD_KEY}/Base/{z}/{y}/{x}.png`}
+        maxZoom={19}
+        tileSize={256}
+      />
+      <MapCenter lat={userLat} lng={userLng} />
+      <MapClickHandler onMapClick={handleMapClick} />
+
+      <Marker position={[userLat, userLng]} icon={clickMode ? clickIcon : userIcon}>
+        <Popup>
+          <div className="text-sm font-semibold">📍 분석 위치</div>
+          <div className="text-xs text-gray-500 mt-1">점수: <strong>{score?.score ?? '-'}점</strong> {score?.grade}등급</div>
+        </Popup>
+      </Marker>
+
+      <Circle center={[userLat, userLng]} radius={500}
+        pathOptions={{ color: '#16a34a', fillColor: '#16a34a', fillOpacity: 0.05, weight: 1.5, dashArray: '5,5' }} />
+      <Circle center={[userLat, userLng]} radius={1000}
+        pathOptions={{ color: '#16a34a', fillColor: '#16a34a', fillOpacity: 0.02, weight: 1, dashArray: '8,8' }} />
+
+      {showRoute && routeCoords.length > 1 && (
+        <Polyline positions={routeCoords}
+          pathOptions={{ color: '#2563eb', weight: 5, opacity: 0.85, lineCap: 'round', lineJoin: 'round' }} />
+      )}
+
+      {visibleParks.map((park) => {
+        const isNearest = score?.nearestPark?.id === park.id;
+        return (
+          <Marker key={park.id} position={[park.lat, park.lng]} icon={isNearest ? nearestParkIcon : parkIcon}>
+            <Popup>
+              <div className="min-w-[180px]">
+                <div className="font-bold text-sm">{park.name}</div>
+                {isNearest && <div className="text-xs font-semibold text-red-600">📍 가장 가까운 공원</div>}
+                <div className="text-xs text-gray-500">{park.type} · {park.district}</div>
+                {park.area > 0 && <div className="text-xs text-gray-500">면적: {(park.area / 10000).toFixed(1)}ha</div>}
+                <div className="mt-1 flex flex-wrap gap-1">
+                  {park.facilities.slice(0, 3).map(f => (
+                    <span key={f} className="text-xs bg-green-100 text-green-700 px-1 py-0.5 rounded">{f}</span>
+                  ))}
+                </div>
+                {park.walkingDistance && (
+                  <div className="mt-1 text-xs font-semibold text-green-700">도보 {park.walkingTime}분 ({park.walkingDistance}m)</div>
+                )}
+              </div>
+            </Popup>
+          </Marker>
+        );
+      })}
+    </MapContainer>
+  );
+
+  return (
+    <>
+      {/* ══════════════════════════════════════════════════════════════════════
+          데스크탑 레이아웃 (lg 이상)
+      ══════════════════════════════════════════════════════════════════════ */}
+      <div className="hidden lg:flex h-[calc(100vh-64px)]">
+        {/* 사이드패널 */}
+        <div className="w-96 bg-white border-r border-gray-200 overflow-y-auto flex-shrink-0">
+          <PanelContent />
+        </div>
+
+        {/* 지도 */}
+        <div className="flex-1 relative">
+          {clickMode && (
+            <div className="absolute top-4 left-1/2 -translate-x-1/2 z-[1000] bg-purple-600 text-white text-sm font-semibold px-5 py-2.5 rounded-full shadow-lg flex items-center gap-2">
+              <MapPin className="w-4 h-4" />
+              지도를 클릭하여 분석할 위치를 선택하세요
+            </div>
+          )}
+          <MapComponent />
+          {/* 범례 */}
+          <div className="absolute bottom-4 right-4 bg-white rounded-xl shadow-lg p-3 text-xs space-y-1.5 z-[1000]">
+            <div className="font-semibold text-gray-700 mb-1">범례</div>
+            <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-green-600 border-2 border-white shadow" /><span className="text-gray-600">내 위치</span></div>
+            <div className="flex items-center gap-2"><span>🌳</span><span className="text-gray-600">공원</span></div>
+            <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-red-500 border-2 border-white shadow" /><span className="text-gray-600">가장 가까운 공원</span></div>
+            <div className="flex items-center gap-2"><div className="w-6 h-1 bg-blue-600 rounded" /><span className="text-gray-600">도보 경로</span></div>
+            <div className="flex items-center gap-2"><div className="w-6 h-0.5 border-t-2 border-dashed border-green-600" /><span className="text-gray-600">500m / 1km</span></div>
+          </div>
+        </div>
+      </div>
+
+      {/* ══════════════════════════════════════════════════════════════════════
+          모바일 레이아웃 (lg 미만)
+      ══════════════════════════════════════════════════════════════════════ */}
+      <div className="lg:hidden flex flex-col" style={{ height: 'calc(100vh - 64px)' }}>
+
+        {/* 모바일 탭 바 */}
+        <div className="flex bg-white border-b border-gray-200 flex-shrink-0">
+          <button
+            onClick={() => setMobileTab('map')}
+            className={`flex-1 flex items-center justify-center gap-2 py-3 text-sm font-semibold transition-colors ${
+              mobileTab === 'map' ? 'text-green-700 border-b-2 border-green-600' : 'text-gray-500'
+            }`}
+          >
+            <Map className="w-4 h-4" />
+            지도
+          </button>
+          <button
+            onClick={() => setMobileTab('info')}
+            className={`flex-1 flex items-center justify-center gap-2 py-3 text-sm font-semibold transition-colors relative ${
+              mobileTab === 'info' ? 'text-green-700 border-b-2 border-green-600' : 'text-gray-500'
+            }`}
+          >
+            <Star className="w-4 h-4" />
+            분석 결과
+            {score && (
+              <span
+                className="absolute top-2 right-6 w-5 h-5 rounded-full text-xs font-bold text-white flex items-center justify-center"
+                style={{ background: scoreColor }}
+              >
+                {score.grade}
+              </span>
+            )}
+          </button>
+        </div>
+
+        {/* 모바일 지도 탭 */}
+        {mobileTab === 'map' && (
+          <div className="flex-1 relative overflow-hidden">
+            {clickMode && (
+              <div className="absolute top-3 left-1/2 -translate-x-1/2 z-[1000] bg-purple-600 text-white text-xs font-semibold px-4 py-2 rounded-full shadow-lg flex items-center gap-1.5">
+                <MapPin className="w-3.5 h-3.5" />
+                지도를 탭하여 위치 선택
+              </div>
+            )}
+
+            {/* 지도 위 플로팅 버튼 */}
+            <div className="absolute top-3 right-3 z-[1000] flex flex-col gap-2">
+              <button
+                onClick={getMyLocation}
+                disabled={locationLoading || apiLoading}
+                className="w-12 h-12 bg-white rounded-full shadow-lg flex items-center justify-center border border-gray-200 active:bg-gray-50 disabled:opacity-60"
+              >
+                {locationLoading || apiLoading
+                  ? <Loader2 className="w-5 h-5 text-green-600 animate-spin" />
+                  : <Navigation className="w-5 h-5 text-green-600" />}
+              </button>
+              <button
+                onClick={() => { setClickMode(!clickMode); setLocationError(''); }}
+                className={`w-12 h-12 rounded-full shadow-lg flex items-center justify-center border ${
+                  clickMode ? 'bg-purple-600 border-purple-600' : 'bg-white border-gray-200 active:bg-gray-50'
+                }`}
+              >
+                <MapPin className={`w-5 h-5 ${clickMode ? 'text-white' : 'text-purple-600'}`} />
+              </button>
+              {score && (
+                <button
+                  onClick={handleShowRoute}
+                  disabled={routeLoading}
+                  className={`w-12 h-12 rounded-full shadow-lg flex items-center justify-center border ${
+                    showRoute ? 'bg-blue-600 border-blue-600' : 'bg-white border-gray-200 active:bg-gray-50'
+                  }`}
+                >
+                  {routeLoading
+                    ? <Loader2 className="w-5 h-5 text-blue-600 animate-spin" />
+                    : <Route className={`w-5 h-5 ${showRoute ? 'text-white' : 'text-blue-600'}`} />}
+                </button>
+              )}
+            </div>
+
+            {/* 지도 */}
+            <MapComponent />
+
+            {/* 하단 미니 점수 카드 (지도 위 오버레이) */}
+            {score && !apiLoading && (
+              <div
+                className="absolute bottom-4 left-3 right-16 z-[1000] bg-white rounded-2xl shadow-xl p-3 flex items-center gap-3 cursor-pointer active:bg-gray-50"
+                onClick={() => setMobileTab('info')}
+              >
+                <div
+                  className="w-12 h-12 rounded-full flex items-center justify-center flex-shrink-0 shadow"
+                  style={{ background: `conic-gradient(${scoreColor} ${score.score * 3.6}deg, #e5e7eb 0deg)` }}
+                >
+                  <div className="w-9 h-9 rounded-full flex flex-col items-center justify-center" style={{ background: scoreColor }}>
+                    <span className="text-sm font-bold text-white leading-none">{score.score}</span>
+                  </div>
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="font-bold text-sm text-gray-800">{score.grade}등급 · {score.score}점</div>
+                  <div className="text-xs text-gray-500 truncate">📍 {score.nearestPark.name} · 도보 {score.walkingTime}분</div>
+                  <div className="text-xs text-green-600 font-medium mt-0.5">탭하여 상세 보기 →</div>
+                </div>
+              </div>
+            )}
+
+            {/* 로딩 오버레이 */}
+            {apiLoading && (
+              <div className="absolute bottom-4 left-3 right-3 z-[1000] bg-white rounded-2xl shadow-xl p-3 flex items-center gap-3">
+                <Loader2 className="w-6 h-6 text-green-600 animate-spin flex-shrink-0" />
+                <div>
+                  <div className="text-sm font-semibold text-gray-800">분석 중...</div>
+                  <div className="text-xs text-gray-500">OSRM 보행 경로 + 경사도 계산</div>
                 </div>
               </div>
             )}
           </div>
         )}
 
-        {/* 필터 */}
-        <div className="p-4 border-b border-gray-100">
-          <button
-            onClick={() => setShowFilter(!showFilter)}
-            className="flex items-center gap-2 text-sm font-medium text-gray-700 hover:text-green-700 w-full"
-          >
-            <Filter className="w-4 h-4" />
-            맞춤 공원 필터
-            {showFilter && <X className="w-4 h-4 ml-auto" />}
-          </button>
-          {showFilter && (
-            <div className="mt-3 space-y-3">
-              {[
-                { key: 'childFriendly', label: '👶 아이 동반 가능' },
-                { key: 'petFriendly', label: '🐕 반려동물 동반 가능' },
-                { key: 'accessible', label: '♿ 장애인 접근 가능' },
-              ].map(({ key, label }) => (
-                <label key={key} className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={filter[key as keyof RecommendationFilter] as boolean}
-                    onChange={(e) => setFilter({ ...filter, [key]: e.target.checked })}
-                    className="rounded text-green-600"
-                  />
-                  {label}
-                </label>
-              ))}
-              <div>
-                <label className="text-sm text-gray-700">최대 거리: {filter.maxDistance}m</label>
-                <input
-                  type="range" min={500} max={5000} step={500}
-                  value={filter.maxDistance}
-                  onChange={(e) => setFilter({ ...filter, maxDistance: Number(e.target.value) })}
-                  className="w-full mt-1 accent-green-600"
-                />
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* 주변 공원 목록 */}
-        <div className="p-4">
-          <h3 className="font-bold text-gray-800 mb-3 flex items-center gap-2">
-            <TreePine className="w-4 h-4 text-green-600" />
-            주변 공원 목록
-            <span className="text-xs text-gray-400 font-normal ml-auto">{nearbyParks.length}개</span>
-          </h3>
-
-          {apiLoading ? (
-            <div className="flex items-center justify-center py-8 gap-2 text-gray-400">
-              <Loader2 className="w-5 h-5 animate-spin" />
-              <span className="text-sm">공공데이터 불러오는 중...</span>
-            </div>
-          ) : (
-            <div className="space-y-2">
-              {nearbyParks.length === 0 ? (
-                <p className="text-sm text-gray-500 text-center py-4">
-                  {apiError ? '서버 연결 오류' : '조건에 맞는 공원이 없습니다'}
-                </p>
-              ) : (
-                nearbyParks.map((park) => (
-                  <div key={park.id} className="bg-gray-50 hover:bg-green-50 rounded-lg p-3 cursor-pointer transition-colors border border-transparent hover:border-green-200">
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="flex-1 min-w-0">
-                        <div className="font-medium text-sm text-gray-800 truncate">{park.name}</div>
-                        <div className="text-xs text-gray-500 mt-0.5">{park.type} · {park.district}</div>
-                        <div className="flex flex-wrap gap-1 mt-1">
-                          {park.childFriendly && <span className="text-xs bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded">👶</span>}
-                          {park.petFriendly && <span className="text-xs bg-orange-100 text-orange-700 px-1.5 py-0.5 rounded">🐕</span>}
-                          {park.accessible && <span className="text-xs bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded">♿</span>}
-                          {park.facilities.slice(0, 2).map(f => (
-                            <span key={f} className="text-xs bg-green-100 text-green-700 px-1.5 py-0.5 rounded">{f}</span>
-                          ))}
-                        </div>
-                      </div>
-                      <div className="text-right flex-shrink-0">
-                        <div className="text-sm font-semibold text-green-700">
-                          {(park.walkingDistance ?? 0) >= 1000
-                            ? `${((park.walkingDistance ?? 0) / 1000).toFixed(1)}km`
-                            : `${park.walkingDistance ?? 0}m`}
-                        </div>
-                        <div className="text-xs text-gray-500 flex items-center gap-1 justify-end">
-                          <Clock className="w-3 h-3" />{park.walkingTime ?? 0}분
-                        </div>
-                        {park.area > 0 && (
-                          <div className="text-xs text-gray-400">{(park.area / 10000).toFixed(1)}ha</div>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                ))
-              )}
-            </div>
-          )}
-
-          {/* 데이터 출처 */}
-          <div className="mt-4 pt-3 border-t border-gray-100 text-xs text-gray-400 space-y-0.5">
-            <p className="font-medium text-gray-500">📊 데이터 출처</p>
-            <p>· 공원 데이터: 공공데이터포털 (data.go.kr)</p>
-            <p>· 전국도시공원정보표준데이터 (2026-04-28)</p>
-            <p>· 지도: VWorld (LX한국국토정보공사)</p>
-            <p>· 경로: OSRM Project (project-osrm.org)</p>
-          </div>
-        </div>
-      </div>
-
-      {/* ── 지도 ── */}
-      <div className="flex-1 relative">
-        {clickMode && (
-          <div className="absolute top-4 left-1/2 -translate-x-1/2 z-[1000] bg-purple-600 text-white text-sm font-semibold px-5 py-2.5 rounded-full shadow-lg flex items-center gap-2">
-            <MapPin className="w-4 h-4" />
-            지도를 클릭하여 분석할 위치를 선택하세요
+        {/* 모바일 정보 탭 */}
+        {mobileTab === 'info' && (
+          <div className="flex-1 overflow-y-auto bg-white">
+            <PanelContent />
           </div>
         )}
-
-        <MapContainer
-          center={[userLat, userLng]}
-          zoom={14}
-          style={{ width: '100%', height: '100%', cursor: clickMode ? 'crosshair' : 'grab' }}
-        >
-          {/* VWorld 지도 타일 */}
-          <TileLayer
-            attribution='&copy; <a href="https://www.vworld.kr" target="_blank">VWorld</a> (LX한국국토정보공사)'
-            url={`https://api.vworld.kr/req/wmts/1.0.0/${VWORLD_KEY}/Base/{z}/{y}/{x}.png`}
-            maxZoom={19}
-            tileSize={256}
-          />
-
-          <MapCenter lat={userLat} lng={userLng} />
-          <MapClickHandler onMapClick={handleMapClick} />
-
-          {/* 사용자 위치 마커 */}
-          <Marker position={[userLat, userLng]} icon={clickMode ? clickIcon : userIcon}>
-            <Popup>
-              <div className="text-sm font-semibold">📍 분석 위치</div>
-              <div className="text-xs text-gray-500 mt-1">
-                녹지 접근성 점수: <strong>{score?.score ?? '-'}점</strong>
-              </div>
-              {score && <div className="text-xs text-gray-500">등급: {score.grade}</div>}
-            </Popup>
-          </Marker>
-
-          {/* 반경 원 */}
-          <Circle center={[userLat, userLng]} radius={500}
-            pathOptions={{ color: '#16a34a', fillColor: '#16a34a', fillOpacity: 0.05, weight: 1.5, dashArray: '5,5' }} />
-          <Circle center={[userLat, userLng]} radius={1000}
-            pathOptions={{ color: '#16a34a', fillColor: '#16a34a', fillOpacity: 0.02, weight: 1, dashArray: '8,8' }} />
-
-          {/* 도보 경로 */}
-          {showRoute && routeCoords.length > 1 && (
-            <Polyline positions={routeCoords}
-              pathOptions={{ color: '#2563eb', weight: 5, opacity: 0.85, lineCap: 'round', lineJoin: 'round' }} />
-          )}
-
-          {/* 공원 마커 (백엔드 실제 데이터) */}
-          {visibleParks.map((park) => {
-            const isNearest = score?.nearestPark?.id === park.id;
-            return (
-              <Marker key={park.id} position={[park.lat, park.lng]} icon={isNearest ? nearestParkIcon : parkIcon}>
-                <Popup>
-                  <div className="min-w-[200px]">
-                    <div className="font-bold text-sm text-gray-800">{park.name}</div>
-                    {isNearest && <div className="text-xs font-semibold text-red-600 mt-0.5">📍 가장 가까운 공원</div>}
-                    <div className="text-xs text-gray-500 mt-0.5">{park.type} · {park.district}</div>
-                    <div className="text-xs text-gray-600 mt-1 leading-relaxed">{park.address}</div>
-                    {park.area > 0 && (
-                      <div className="text-xs text-gray-500 mt-1">면적: {(park.area / 10000).toFixed(1)}ha</div>
-                    )}
-                    <div className="mt-2 flex flex-wrap gap-1">
-                      {park.facilities.slice(0, 4).map((f) => (
-                        <span key={f} className="text-xs bg-green-100 text-green-700 px-1.5 py-0.5 rounded">{f}</span>
-                      ))}
-                    </div>
-                    <div className="mt-1.5 flex gap-2 text-xs">
-                      {park.childFriendly && <span>👶</span>}
-                      {park.petFriendly && <span>🐕</span>}
-                      {park.accessible && <span>♿</span>}
-                    </div>
-                    {park.walkingDistance && (
-                      <div className="mt-1.5 text-xs font-semibold text-green-700">
-                        도보 {park.walkingTime}분 ({park.walkingDistance}m)
-                      </div>
-                    )}
-                    {park.manager && (
-                      <div className="mt-1 text-xs text-gray-400">관리: {park.manager}</div>
-                    )}
-                    <div className="mt-1 text-xs text-gray-300">출처: 공공데이터포털</div>
-                  </div>
-                </Popup>
-              </Marker>
-            );
-          })}
-        </MapContainer>
-
-        {/* 지도 범례 */}
-        <div className="absolute bottom-4 right-4 bg-white rounded-xl shadow-lg p-3 text-xs space-y-1.5 z-[1000]">
-          <div className="font-semibold text-gray-700 mb-1">범례</div>
-          <div className="flex items-center gap-2">
-            <div className="w-3 h-3 rounded-full bg-green-600 border-2 border-white shadow" />
-            <span className="text-gray-600">내 위치</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <span>🌳</span><span className="text-gray-600">공원 (공공데이터)</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <div className="w-3 h-3 rounded-full bg-red-500 border-2 border-white shadow" />
-            <span className="text-gray-600">가장 가까운 공원</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <div className="w-6 h-1 bg-blue-600 rounded" />
-            <span className="text-gray-600">도보 경로 (OSM)</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <div className="w-6 h-0.5 border-t-2 border-dashed border-green-600" />
-            <span className="text-gray-600">500m / 1km</span>
-          </div>
-          <div className="pt-1 border-t border-gray-100 text-gray-400">
-            지도: VWorld (LX공사)
-          </div>
-        </div>
       </div>
-    </div>
+    </>
   );
 }
