@@ -4,7 +4,10 @@ import { Building2, AlertTriangle, TrendingUp, Download, MessageSquare, Send, Br
 import { getScoreColor, getScoreBgColor } from '../utils/accessibility';
 import type { ChatMessage } from '../types';
 
-const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
+const API_BASE = import.meta.env.VITE_API_BASE
+  || (typeof window !== 'undefined' && window.location.hostname !== 'localhost'
+    ? 'https://greenreach-api.onrender.com'
+    : 'http://localhost:8000');
 
 // ─── 타입 ─────────────────────────────────────────────────────────────────────
 interface DistrictStat {

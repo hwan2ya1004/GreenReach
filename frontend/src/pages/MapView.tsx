@@ -9,7 +9,10 @@ import type { RecommendationFilter } from '../types';
 const VWORLD_KEY = '4B826FAE-56F2-32CB-829B-2CD7F7DFF7E7';
 
 // ─── 백엔드 API URL
-const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
+const API_BASE = import.meta.env.VITE_API_BASE
+  || (typeof window !== 'undefined' && window.location.hostname !== 'localhost'
+    ? 'https://greenreach-api.onrender.com'
+    : 'http://localhost:8000');
 
 // ─── 타입 정의 ────────────────────────────────────────────────────────────────
 interface Park {
@@ -162,7 +165,7 @@ const MapComponent = memo(({
   <MapContainer
     center={[userLat, userLng]}
     zoom={14}
-    style={{ width: '100%', height: '100%', cursor: 'crosshair' }}
+    style={{ width: '100%', height: '100%', cursor: 'grab' }}
   >
     <TileLayer
       attribution='&copy; <a href="https://www.vworld.kr" target="_blank">VWorld</a>'
@@ -171,7 +174,7 @@ const MapComponent = memo(({
       tileSize={256}
     />
     <MapCenter lat={userLat} lng={userLng} />
-    <MapClickHandler onMapClick={onMapClick} enabled={true} />
+    <MapClickHandler onMapClick={onMapClick} enabled={false} />
     <MapRefCapture mapRef={mapRef} />
 
     <Marker position={[userLat, userLng]} icon={userIcon}>
@@ -839,7 +842,7 @@ export default function MapView() {
           {/* 힌트 배너 */}
           <div className="absolute top-4 left-1/2 -translate-x-1/2 z-[1000] bg-white/90 backdrop-blur-sm text-gray-700 text-xs font-medium px-4 py-2 rounded-full shadow-md flex items-center gap-1.5 pointer-events-none">
             <MapPin className="w-3.5 h-3.5 text-green-600" />
-            지도를 클릭하면 해당 위치의 녹지 접근성을 분석합니다
+            GPS 버튼을 눌러 내 위치를 분석하거나, 공원 마커를 클릭하세요
           </div>
           <MapComponent
             userLat={userLat}
@@ -911,7 +914,7 @@ export default function MapView() {
             {!apiLoading && (
               <div className="absolute top-3 left-3 right-16 z-[1000] bg-white/90 backdrop-blur-sm text-gray-600 text-xs font-medium px-3 py-1.5 rounded-full shadow-md flex items-center gap-1.5 pointer-events-none">
                 <MapPin className="w-3 h-3 text-green-600 flex-shrink-0" />
-                <span className="truncate">지도를 탭하면 해당 위치를 분석합니다</span>
+                <span className="truncate">GPS 버튼으로 내 위치 분석 · 공원 마커를 탭하세요</span>
               </div>
             )}
 

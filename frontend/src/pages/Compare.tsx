@@ -5,7 +5,10 @@ import { ArrowLeftRight, TrendingUp, TrendingDown, Minus, MapPin, Loader2, Navig
 import { getScoreColor } from '../utils/accessibility';
 
 const VWORLD_KEY = '4B826FAE-56F2-32CB-829B-2CD7F7DFF7E7';
-const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
+const API_BASE = import.meta.env.VITE_API_BASE
+  || (typeof window !== 'undefined' && window.location.hostname !== 'localhost'
+    ? 'https://greenreach-api.onrender.com'
+    : 'http://localhost:8000');
 
 // ─── 타입 ─────────────────────────────────────────────────────────────────────
 interface AccessibilityResult {
