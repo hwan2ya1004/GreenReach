@@ -116,6 +116,10 @@ async def lifespan(app: FastAPI):
     # ML 모델 초기화 (scikit-learn)
     try:
         districts = _get_district_list()
+        # CSV/DB 모두 없는 배포 환경이면 폴백 샘플 데이터 사용
+        if not districts:
+            districts = ml_model.FALLBACK_DISTRICTS
+            print("[GreenReach] ℹ️  CSV/DB 없음 → 폴백 샘플 데이터로 ML 모델 초기화")
         result = ml_model.initialize_models(districts)
         print(f"[GreenReach] 🤖 ML 모델 초기화: {result}")
     except Exception as e:
@@ -750,6 +754,10 @@ def ai_chat(req: ChatRequest):
     - KNN 유사 지역 추천 포함
     """
     districts = _get_district_list()
+
+    # districts가 비어있으면 폴백 샘플 데이터 사용 (CSV/DB 없는 배포 환경 대비)
+    if not districts:
+        districts = ml_model.FALLBACK_DISTRICTS
 
     # ML 모델이 아직 초기화되지 않은 경우 재시도
     if ml_model._rf_model is None:
