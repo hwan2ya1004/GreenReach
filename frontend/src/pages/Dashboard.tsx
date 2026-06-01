@@ -547,21 +547,23 @@ export default function Dashboard() {
           </div>
           {/* 빠른 질문 버튼 */}
           <div className="flex gap-2 mt-2 flex-wrap">
-            {[
-              '🏆 녹지 가장 좋은 곳?',
-              '⚠️ 취약 지역은?',
-              '🌳 공원 가장 많은 곳?',
-              '📊 전국 평균 통계',
-              '🤖 AI 예측 결과 알려줘',
-              '🔍 강남구와 비슷한 지역은?',
-            ].map((q) => (
+          {[
+              { label: '🏆 녹지 가장 좋은 곳?', query: '녹지가 가장 좋은 곳은?' },
+              { label: '⚠️ 취약 지역은?', query: '녹지 취약 지역은 어디야?' },
+              { label: '🌳 공원 순위 TOP 5', query: '공원이 가장 많은 곳 순위' },
+              { label: '📊 전국 평균 통계', query: '전국 평균 통계 알려줘' },
+              { label: '🤖 AI 예측 결과', query: 'AI 예측 결과 알려줘' },
+              { label: '🔍 강남구 유사 지역', query: '강남구와 비슷한 지역은?' },
+              { label: '🏡 이사 추천 지역', query: '이사 가기 좋은 녹지 지역 추천' },
+              { label: '🔧 개선 필요 지역', query: '녹지 개선이 필요한 곳은?' },
+            ].map(({ label, query }) => (
               <button
-                key={q}
-                onClick={() => handleSendChat(q.replace(/^[^\s]+\s/, ''))}
+                key={label}
+                onClick={() => handleSendChat(query)}
                 disabled={chatLoading}
                 className="text-xs bg-gray-100 hover:bg-green-100 text-gray-600 hover:text-green-700 px-3 py-1 rounded-full transition-colors disabled:opacity-50"
               >
-                {q}
+                {label}
               </button>
             ))}
           </div>

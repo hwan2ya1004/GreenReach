@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import math
 import re
+import random
 from typing import Any
 
 import numpy as np
@@ -222,6 +223,8 @@ INTENT_CORPUS = {
         "공원 많은 곳 어디야", "녹지 좋은 동네 어디",
         "가장 살기 좋은 지역", "공원 제일 많은 동네",
         "녹지 가장 풍부한 곳", "공원 많은 지역 순위 1위",
+        "녹지가 가장 좋은 곳은", "녹지 가장 좋은 곳은",
+        "공원이 가장 많은 곳은", "녹지 환경이 가장 좋은 곳",
     ],
     "worst_district": [
         # 직접적 표현
@@ -244,6 +247,8 @@ INTENT_CORPUS = {
         "어디가 제일 살기 안 좋아", "녹지 환경 최악인 곳",
         "녹지 취약 지역 알려줘", "취약 지역 현황",
         "녹지 부족한 지역 어디야", "공원 제일 없는 곳",
+        "녹지가 가장 부족한 곳은", "공원이 가장 없는 곳은",
+        "어디가 제일 취약해", "녹지 취약 지역은 어디야",
     ],
     "stats_overview": [
         # 직접적 표현
@@ -261,6 +266,8 @@ INTENT_CORPUS = {
         "전체 데이터 보여줘", "전국 현황 어떻게 돼",
         "우리나라 공원 얼마나 있어", "전국 녹지 면적",
         "전체 공원 통계 알려줘", "전국 분석 결과",
+        "전국 평균 통계", "전국 녹지 평균",
+        "우리나라 전체 녹지 현황", "전국 공원 통계 요약",
     ],
     "top_parks": [
         # 직접적 표현
@@ -275,6 +282,7 @@ INTENT_CORPUS = {
         "공원 많은 순서 알려줘", "녹지 많은 순위",
         "공원 순위 TOP 10", "공원 많은 지역 순서",
         "어디가 공원 많아 순서대로", "공원 랭킹 보여줘",
+        "공원이 가장 많은 곳 순위", "녹지 많은 지역 순서대로",
     ],
     "ml_prediction": [
         # 직접적 표현
@@ -289,6 +297,8 @@ INTENT_CORPUS = {
         "머신러닝 예측 결과", "AI가 분석한 결과",
         "인공지능으로 분석해줘", "AI 예측 어때",
         "ML 분석 결과 보여줘", "AI 예측 점수 알려줘",
+        "AI 예측 결과", "머신러닝 분석 결과",
+        "AI로 분석해줘", "인공지능 예측 결과 알려줘",
     ],
     "similar_district": [
         # 직접적 표현
@@ -304,6 +314,9 @@ INTENT_CORPUS = {
         "비슷한 수준 지역 어디야", "같은 환경인 곳 알려줘",
         "어디가 비슷한 수준이야", "유사 지역 추천",
         "비슷한 녹지 환경 어디야",
+        "와 비슷한 지역", "랑 비슷한 곳",
+        "와 유사한 지역", "랑 유사한 곳",
+        "비슷한 곳 추천", "유사한 환경 지역 추천",
     ],
     "district_detail": [
         # 직접적 표현
@@ -319,6 +332,28 @@ INTENT_CORPUS = {
         "어떤 상황이야", "녹지 얼마나 있어",
         "공원 어떻게 돼", "녹지 정보 알려줘",
         "공원 상황 어때", "녹지 몇 개야",
+        "현황 어때", "어떤지 알려줘",
+        "공원 몇 개 있는지", "녹지 상황은",
+    ],
+    "recommendation": [
+        # 이사/거주 추천
+        "이사 가기 좋은 곳", "살기 좋은 동네 추천",
+        "녹지 좋은 곳으로 이사", "공원 많은 곳 이사",
+        "어디로 이사 가면 좋아", "녹지 환경 좋은 동네",
+        "공원 가까운 동네 추천", "자연 환경 좋은 곳",
+        "아이 키우기 좋은 곳", "산책하기 좋은 동네",
+        "공원 많은 곳 추천해줘", "녹지 풍부한 동네 추천",
+        "어디가 살기 좋을까", "이사 추천 지역",
+        "녹지 환경 추천", "공원 많은 지역 추천",
+    ],
+    "improvement": [
+        # 개선/정책 관련
+        "개선이 필요한 곳", "녹지 확충 필요", "공원 부족 지역 개선",
+        "정책 필요한 곳", "녹지 투자 필요", "공원 늘려야 할 곳",
+        "녹지 개선 필요 지역", "공원 확충 필요한 곳",
+        "어디가 개선이 필요해", "녹지 정책 필요한 지역",
+        "공원 부족해서 개선 필요", "녹지 투자 우선 지역",
+        "개선 우선순위 지역", "녹지 확충 우선 지역",
     ],
 }
 
@@ -349,6 +384,12 @@ INTENT_KEYWORDS = {
     ],
     "district_detail": [
         "현황", "정보", "상세", "자세히", "어때", "어떻게",
+    ],
+    "recommendation": [
+        "이사", "추천", "살기", "거주", "아이", "산책", "자연",
+    ],
+    "improvement": [
+        "개선", "확충", "투자", "정책", "늘려", "부족",
     ],
 }
 
@@ -445,8 +486,8 @@ def classify_intent(question: str) -> tuple[str, float]:
     if best_score < 0.05:
         return "unknown", best_score
 
-    # 신뢰도가 낮으면 (0.05~0.15) district_detail로 폴백
-    if best_score < 0.15:
+    # 신뢰도가 낮으면 (0.05~0.12) district_detail로 폴백
+    if best_score < 0.12:
         return "district_detail", best_score
 
     return best_intent, best_score
@@ -484,7 +525,63 @@ def extract_mentioned_district(question: str, districts: list[dict]) -> dict | N
     return None
 
 
-# ─── 7. AI 챗봇 응답 생성 ────────────────────────────────────────────────────
+# ─── 7. 응답 품질 향상을 위한 헬퍼 함수 ──────────────────────────────────────
+
+def _grade_emoji(grade_label: str) -> str:
+    """등급에 따른 이모지 반환"""
+    return {"우수": "🟢", "보통": "🟡", "취약": "🔴"}.get(grade_label, "⚪")
+
+
+def _area_description(area_ha: float) -> str:
+    """면적을 직관적인 설명으로 변환"""
+    if area_ha >= 100:
+        return f"{area_ha:.0f}ha (여의도 공원의 약 {area_ha/22.9:.1f}배)"
+    elif area_ha >= 10:
+        return f"{area_ha:.1f}ha (축구장 약 {area_ha*1.4:.0f}개 규모)"
+    elif area_ha >= 1:
+        return f"{area_ha:.2f}ha (축구장 약 {area_ha*1.4:.1f}개 규모)"
+    else:
+        return f"{area_ha*10000:.0f}㎡"
+
+
+def _park_count_description(count: int) -> str:
+    """공원 수를 직관적인 설명으로 변환"""
+    if count >= 500:
+        return f"{count:,}개 (매우 풍부한 수준)"
+    elif count >= 200:
+        return f"{count:,}개 (풍부한 수준)"
+    elif count >= 100:
+        return f"{count:,}개 (보통 수준)"
+    elif count >= 50:
+        return f"{count:,}개 (다소 부족한 수준)"
+    else:
+        return f"{count:,}개 (부족한 수준)"
+
+
+def _get_improvement_advice(grade_label: str, park_count: int, total_area_ha: float) -> str:
+    """등급에 따른 개선 조언 생성"""
+    if grade_label == "우수":
+        return "현재 우수한 녹지 환경을 유지하고, 공원 시설 품질 향상에 집중하면 좋습니다."
+    elif grade_label == "보통":
+        if park_count < 100:
+            return "소규모 근린공원 추가 조성으로 접근성을 높일 수 있습니다."
+        else:
+            return "기존 공원의 면적 확장 및 시설 개선을 통해 녹지 질을 높일 수 있습니다."
+    else:  # 취약
+        return "녹지 공간 확충이 시급합니다. 유휴 부지를 활용한 소공원 조성과 가로수 확대를 권장합니다."
+
+
+def _get_living_tip(grade_label: str, district_name: str) -> str:
+    """거주 관련 팁 생성"""
+    if grade_label == "우수":
+        return f"🏡 {district_name}은(는) 녹지 환경이 우수해 산책, 운동, 아이 양육에 적합한 지역입니다."
+    elif grade_label == "보통":
+        return f"🏡 {district_name}은(는) 평균적인 녹지 환경을 갖추고 있어 일상적인 공원 이용에 무리가 없습니다."
+    else:
+        return f"🏡 {district_name}은(는) 녹지가 다소 부족한 편입니다. 인근 지역 공원을 활용하는 것을 권장합니다."
+
+
+# ─── 8. AI 챗봇 응답 생성 ────────────────────────────────────────────────────
 
 def generate_ml_response(question: str, districts: list[dict]) -> dict:
     """
@@ -513,119 +610,246 @@ def generate_ml_response(question: str, districts: list[dict]) -> dict:
     # 지역명 추출 (축약형 포함)
     mentioned_district = extract_mentioned_district(question, districts)
 
-    # 의도별 응답 생성
+    # ── 의도별 응답 생성 ──────────────────────────────────────────────────────
+
+    # 1. 최고 녹지 지역
     if intent == "best_district" and not mentioned_district:
         best = scored[0]
         pred = predict_grade(best)
+        top3 = scored[:3]
+        top3_lines = "\n".join(
+            f"  {i+1}위. **{d['district']}** — 공원 {d['parkCount']:,}개, {d['totalArea']/10000:.0f}ha"
+            for i, d in enumerate(top3)
+        )
         answer = (
-            f"🏆 전국에서 녹지 접근성이 가장 우수한 지역은 **{best['district']}**입니다.\n\n"
-            f"• 공원 수: {best['parkCount']}개\n"
-            f"• 총 녹지 면적: {best['totalArea']/10000:.0f}ha\n"
-            f"• AI 예측 등급: {pred['grade_label']} (ML 점수 {pred['ml_score']}점)\n"
-            f"• 우수 확률: {pred['probabilities']['우수']}%"
+            f"🏆 전국 녹지 접근성 **1위 지역은 {best['district']}**입니다!\n\n"
+            f"📊 **{best['district']} 상세 현황**\n"
+            f"• 공원 수: {_park_count_description(best['parkCount'])}\n"
+            f"• 총 녹지 면적: {_area_description(best['totalArea']/10000)}\n"
+            f"• 평균 공원 면적: {best['avgArea']/10000:.2f}ha\n"
+            f"• AI 예측 등급: {_grade_emoji(pred['grade_label'])} **{pred['grade_label']}** (ML 점수 {pred['ml_score']}점)\n"
+            f"• 우수 확률: {pred['probabilities']['우수']}%\n\n"
+            f"🥇 **TOP 3 지역**\n{top3_lines}\n\n"
+            f"{_get_living_tip(pred['grade_label'], best['district'])}"
         )
         return {"answer": answer, "intent": intent, "confidence": round(confidence, 3), "data": best}
 
+    # 2. 최악 녹지 지역
     elif intent == "worst_district" and not mentioned_district:
         worst = scored[-1]
         pred = predict_grade(worst)
+        bottom3 = scored[-3:][::-1]
+        bottom3_lines = "\n".join(
+            f"  {i+1}. **{d['district']}** — 공원 {d['parkCount']:,}개, {d['totalArea']/10000:.1f}ha"
+            for i, d in enumerate(bottom3)
+        )
+        vulnerable_count = sum(1 for d in scored if d["score"] < 50)
         answer = (
             f"⚠️ 전국에서 녹지 접근성이 가장 취약한 지역은 **{worst['district']}**입니다.\n\n"
-            f"• 공원 수: {worst['parkCount']}개\n"
-            f"• 총 녹지 면적: {worst['totalArea']/10000:.1f}ha\n"
-            f"• AI 예측 등급: {pred['grade_label']} (ML 점수 {pred['ml_score']}점)\n"
+            f"📊 **{worst['district']} 상세 현황**\n"
+            f"• 공원 수: {_park_count_description(worst['parkCount'])}\n"
+            f"• 총 녹지 면적: {_area_description(worst['totalArea']/10000)}\n"
+            f"• AI 예측 등급: {_grade_emoji(pred['grade_label'])} **{pred['grade_label']}** (ML 점수 {pred['ml_score']}점)\n"
             f"• 취약 확률: {pred['probabilities']['취약']}%\n\n"
-            f"녹지 공간 확충이 시급합니다."
+            f"🔴 **녹지 취약 하위 3개 지역**\n{bottom3_lines}\n\n"
+            f"📌 현재 전국 {len(districts)}개 지역 중 **{vulnerable_count}개 지역**이 녹지 취약 상태(50점 미만)입니다.\n\n"
+            f"💡 {_get_improvement_advice(pred['grade_label'], worst['parkCount'], worst['totalArea']/10000)}"
         )
         return {"answer": answer, "intent": intent, "confidence": round(confidence, 3), "data": worst}
 
+    # 3. 전국 통계 개요
     elif intent == "stats_overview":
         total_parks = sum(d.get("parkCount", 0) for d in districts)
         total_area = sum(d.get("totalArea", 0.0) for d in districts)
+        avg_parks = total_parks / len(districts) if districts else 0
+        avg_area = total_area / len(districts) if districts else 0
         vulnerable = sum(1 for d in scored if d["score"] < 50)
+        excellent = sum(1 for d in scored if d["score"] >= 70)
         answer = (
-            f"📊 전국 녹지 현황 (AI 분석):\n\n"
-            f"• 총 공원 수: {total_parks:,}개\n"
-            f"• 총 녹지 면적: {total_area/10000:.0f}ha\n"
-            f"• 분석 지역 수: {len(districts)}개 구/군/시\n"
-            f"• 녹지 취약 지역: {vulnerable}개 (점수 50점 미만)\n"
-            f"• 공원 수 1위: {scored[0]['district']} ({scored[0]['parkCount']}개)\n\n"
-            f"ML 모델이 {len(districts)}개 지역을 분석했습니다."
+            f"📊 **전국 녹지 현황 종합 분석** (AI 기반)\n\n"
+            f"🌳 **공원 현황**\n"
+            f"• 전국 총 공원 수: **{total_parks:,}개**\n"
+            f"• 전국 총 녹지 면적: **{total_area/10000:.0f}ha**\n"
+            f"• 지역당 평균 공원 수: {avg_parks:.1f}개\n"
+            f"• 지역당 평균 녹지 면적: {avg_area/10000:.1f}ha\n\n"
+            f"🏙️ **지역 분포** ({len(districts)}개 구/군/시 분석)\n"
+            f"• 🟢 우수 지역 (70점 이상): {excellent}개\n"
+            f"• 🟡 보통 지역 (50~69점): {len(districts) - vulnerable - excellent}개\n"
+            f"• 🔴 취약 지역 (50점 미만): {vulnerable}개\n\n"
+            f"🏆 **공원 수 1위**: {scored[0]['district']} ({scored[0]['parkCount']:,}개)\n"
+            f"⚠️ **녹지 최취약**: {scored[-1]['district']} ({scored[-1]['parkCount']:,}개)\n\n"
+            f"💡 ML 모델이 {len(districts)}개 지역을 RandomForest + KNN 알고리즘으로 분석했습니다."
         )
         return {"answer": answer, "intent": intent, "confidence": round(confidence, 3), "data": None}
 
+    # 4. 공원 순위 TOP
     elif intent == "top_parks":
         top5 = sorted(districts, key=lambda x: x.get("parkCount", 0), reverse=True)[:5]
         lines = "\n".join(
-            f"{i+1}. **{d['district']}**: {d['parkCount']}개 공원 ({d['totalArea']/10000:.0f}ha)"
+            f"  {i+1}위. **{d['district']}** — {d['parkCount']:,}개 공원 / {_area_description(d['totalArea']/10000)}"
             for i, d in enumerate(top5)
         )
-        answer = f"🌳 공원이 가장 많은 지역 TOP 5:\n\n{lines}"
+        answer = (
+            f"🌳 **공원이 가장 많은 지역 TOP 5**\n\n"
+            f"{lines}\n\n"
+            f"📌 1위 {top5[0]['district']}은(는) 꼴찌 {scored[-1]['district']}({scored[-1]['parkCount']:,}개)보다 "
+            f"**{top5[0]['parkCount'] - scored[-1]['parkCount']:,}개** 더 많은 공원을 보유하고 있습니다."
+        )
         return {"answer": answer, "intent": intent, "confidence": round(confidence, 3), "data": top5}
 
+    # 5. ML 예측
     elif intent == "ml_prediction":
         if mentioned_district:
             pred = predict_grade(mentioned_district)
+            d = mentioned_district
             answer = (
-                f"🤖 **{mentioned_district['district']}** AI 예측 결과:\n\n"
-                f"• ML 예측 등급: **{pred['grade_label']}**\n"
-                f"• ML 점수: {pred['ml_score']}점\n"
-                f"• 취약 확률: {pred['probabilities']['취약']}%\n"
-                f"• 보통 확률: {pred['probabilities']['보통']}%\n"
-                f"• 우수 확률: {pred['probabilities']['우수']}%\n\n"
-                f"RandomForest 모델 (200개 트리) 기반 예측입니다."
+                f"🤖 **{d['district']} AI 예측 분석 결과**\n\n"
+                f"• ML 예측 등급: {_grade_emoji(pred['grade_label'])} **{pred['grade_label']}**\n"
+                f"• ML 종합 점수: **{pred['ml_score']}점**\n\n"
+                f"📊 **등급별 확률**\n"
+                f"• 🟢 우수: {pred['probabilities']['우수']}%\n"
+                f"• 🟡 보통: {pred['probabilities']['보통']}%\n"
+                f"• 🔴 취약: {pred['probabilities']['취약']}%\n\n"
+                f"📌 **기반 데이터**\n"
+                f"• 공원 수: {_park_count_description(d['parkCount'])}\n"
+                f"• 총 녹지 면적: {_area_description(d['totalArea']/10000)}\n"
+                f"• 평균 공원 면적: {d['avgArea']/10000:.2f}ha\n\n"
+                f"💡 {_get_improvement_advice(pred['grade_label'], d['parkCount'], d['totalArea']/10000)}\n\n"
+                f"🔬 RandomForest 모델 (200개 결정 트리) 기반 예측입니다."
             )
         else:
             top3_pred = [
                 {**d, **predict_grade(d)} for d in scored[:3]
             ]
-            lines = "\n".join(
-                f"{i+1}. {d['district']}: {d['grade_label']} ({d['ml_score']}점)"
+            bottom3_pred = [
+                {**d, **predict_grade(d)} for d in scored[-3:][::-1]
+            ]
+            top_lines = "\n".join(
+                f"  {i+1}. **{d['district']}**: {_grade_emoji(d['grade_label'])} {d['grade_label']} ({d['ml_score']}점) — 공원 {d['parkCount']:,}개"
                 for i, d in enumerate(top3_pred)
             )
-            answer = f"🤖 AI 예측 상위 지역 TOP 3:\n\n{lines}\n\nRandomForest 모델 기반 예측입니다."
-        return {"answer": answer, "intent": intent, "confidence": round(confidence, 3), "data": None}
-
-    elif intent == "similar_district" and mentioned_district:
-        similar = find_similar_districts(mentioned_district["district"], districts, top_k=3)
-        if similar:
-            lines = "\n".join(
-                f"{i+1}. **{d['district']}** (유사도 {d['similarity_score']}점) - 공원 {d['parkCount']}개"
-                for i, d in enumerate(similar)
+            bottom_lines = "\n".join(
+                f"  {i+1}. **{d['district']}**: {_grade_emoji(d['grade_label'])} {d['grade_label']} ({d['ml_score']}점) — 공원 {d['parkCount']:,}개"
+                for i, d in enumerate(bottom3_pred)
             )
             answer = (
-                f"🔍 **{mentioned_district['district']}**와 녹지 환경이 유사한 지역:\n\n"
-                f"{lines}\n\nKNN 알고리즘 기반 유사도 분석 결과입니다."
+                f"🤖 **AI 녹지 등급 예측 결과**\n\n"
+                f"🟢 **우수 지역 TOP 3**\n{top_lines}\n\n"
+                f"🔴 **취약 지역 TOP 3**\n{bottom_lines}\n\n"
+                f"🔬 RandomForest 모델 (200개 결정 트리) 기반 예측입니다.\n"
+                f"특정 지역을 알고 싶다면 \"강남구 AI 예측\" 처럼 지역명을 포함해 질문해보세요!"
             )
-        else:
-            answer = f"유사 지역 분석 데이터가 부족합니다."
-        return {"answer": answer, "intent": intent, "confidence": round(confidence, 3), "data": similar}
+        return {"answer": answer, "intent": intent, "confidence": round(confidence, 3), "data": None}
 
-    # 특정 지역 상세 (기본 폴백)
+    # 6. 유사 지역 추천
+    elif intent == "similar_district":
+        if mentioned_district:
+            similar = find_similar_districts(mentioned_district["district"], districts, top_k=3)
+            d = mentioned_district
+            pred = predict_grade(d)
+            if similar:
+                lines = "\n".join(
+                    f"  {i+1}. **{s['district']}** (유사도 {s['similarity_score']}점)\n"
+                    f"     공원 {s['parkCount']:,}개 · {s['totalArea']/10000:.1f}ha"
+                    for i, s in enumerate(similar)
+                )
+                answer = (
+                    f"🔍 **{d['district']}**와 녹지 환경이 유사한 지역\n\n"
+                    f"📌 기준 지역 현황: 공원 {d['parkCount']:,}개 · {d['totalArea']/10000:.1f}ha · {_grade_emoji(pred['grade_label'])} {pred['grade_label']}\n\n"
+                    f"🗺️ **유사 지역 TOP 3**\n{lines}\n\n"
+                    f"💡 유사도는 공원 수, 총 면적, 평균 면적을 기반으로 KNN 알고리즘이 계산합니다.\n"
+                    f"이 지역들은 {d['district']}와 비슷한 녹지 정책 사례를 참고할 수 있습니다."
+                )
+            else:
+                answer = f"유사 지역 분석 데이터가 부족합니다. 다른 지역으로 다시 시도해보세요."
+            return {"answer": answer, "intent": intent, "confidence": round(confidence, 3), "data": similar if similar else None}
+        else:
+            # 지역명 없이 유사 지역 요청 → 안내 메시지
+            answer = (
+                f"🔍 **유사 지역 분석**을 원하시는군요!\n\n"
+                f"어떤 지역을 기준으로 유사한 곳을 찾아드릴까요?\n\n"
+                f"예시:\n"
+                f"• \"강남구와 비슷한 지역은?\"\n"
+                f"• \"수원시랑 유사한 곳 알려줘\"\n"
+                f"• \"종로구와 비슷한 녹지 환경 지역\"\n\n"
+                f"지역명을 포함해서 다시 질문해주세요! 😊"
+            )
+            return {"answer": answer, "intent": intent, "confidence": round(confidence, 3), "data": None}
+
+    # 7. 이사/거주 추천
+    elif intent == "recommendation":
+        top5 = sorted(districts, key=lambda x: x.get("parkCount", 0), reverse=True)[:5]
+        lines = "\n".join(
+            f"  {i+1}. **{d['district']}** — 공원 {d['parkCount']:,}개 · {d['totalArea']/10000:.0f}ha"
+            for i, d in enumerate(top5)
+        )
+        answer = (
+            f"🏡 **녹지 환경 기준 거주 추천 지역 TOP 5**\n\n"
+            f"{lines}\n\n"
+            f"💡 **추천 기준**\n"
+            f"• 공원 수가 많을수록 일상적인 녹지 접근성이 높습니다\n"
+            f"• 평균 공원 면적이 클수록 쾌적한 공원 환경을 즐길 수 있습니다\n"
+            f"• 특정 지역의 상세 정보는 \"강남구 현황 알려줘\"처럼 질문해보세요!"
+        )
+        return {"answer": answer, "intent": intent, "confidence": round(confidence, 3), "data": top5}
+
+    # 8. 개선 필요 지역
+    elif intent == "improvement":
+        vulnerable = [d for d in scored if d["score"] < 50][:5]
+        lines = "\n".join(
+            f"  {i+1}. **{d['district']}** — 공원 {d['parkCount']:,}개 · {d['totalArea']/10000:.1f}ha · {d['score']}점"
+            for i, d in enumerate(vulnerable)
+        )
+        answer = (
+            f"🔧 **녹지 개선이 시급한 지역 TOP 5**\n\n"
+            f"{lines}\n\n"
+            f"📌 이 지역들은 녹지 접근성 점수가 50점 미만으로, 공원 확충이 필요합니다.\n\n"
+            f"💡 **개선 방향**\n"
+            f"• 유휴 부지를 활용한 소규모 근린공원 조성\n"
+            f"• 가로수 및 도시 숲 확대\n"
+            f"• 옥상 녹화, 벽면 녹화 등 입체 녹지 활용\n"
+            f"• 인근 지역 공원과의 보행 네트워크 연결"
+        )
+        return {"answer": answer, "intent": intent, "confidence": round(confidence, 3), "data": vulnerable}
+
+    # 9. 특정 지역 상세 (기본 폴백 - 지역명 있을 때)
     if mentioned_district:
         d = mentioned_district
         pred = predict_grade(d)
+        similar = find_similar_districts(d["district"], districts, top_k=2)
+        similar_text = ""
+        if similar:
+            similar_names = ", ".join(f"**{s['district']}**" for s in similar)
+            similar_text = f"\n\n🔍 **유사한 녹지 환경 지역**: {similar_names}"
+
         answer = (
-            f"📍 **{d['district']}** 녹지 현황:\n\n"
-            f"• 공원 수: {d['parkCount']}개\n"
-            f"• 총 녹지 면적: {d['totalArea']/10000:.1f}ha\n"
-            f"• 평균 공원 면적: {d['avgArea']/10000:.2f}ha\n"
-            f"• AI 예측 등급: **{pred['grade_label']}** (ML 점수 {pred['ml_score']}점)\n"
-            f"• 취약/보통/우수 확률: {pred['probabilities']['취약']}% / {pred['probabilities']['보통']}% / {pred['probabilities']['우수']}%"
+            f"📍 **{d['district']} 녹지 현황 분석**\n\n"
+            f"🌳 **공원 현황**\n"
+            f"• 공원 수: {_park_count_description(d['parkCount'])}\n"
+            f"• 총 녹지 면적: {_area_description(d['totalArea']/10000)}\n"
+            f"• 평균 공원 면적: {d['avgArea']/10000:.2f}ha\n\n"
+            f"🤖 **AI 예측 결과**\n"
+            f"• 예측 등급: {_grade_emoji(pred['grade_label'])} **{pred['grade_label']}** (ML 점수 {pred['ml_score']}점)\n"
+            f"• 우수/보통/취약 확률: {pred['probabilities']['우수']}% / {pred['probabilities']['보통']}% / {pred['probabilities']['취약']}%\n\n"
+            f"💡 {_get_improvement_advice(pred['grade_label'], d['parkCount'], d['totalArea']/10000)}"
+            f"{similar_text}"
         )
         return {"answer": answer, "intent": "district_detail", "confidence": round(confidence, 3), "data": d}
 
-    # 완전 폴백
+    # 10. 완전 폴백
     return {
         "answer": (
-            "죄송합니다, 질문을 이해하지 못했습니다. 다음과 같이 질문해보세요:\n\n"
+            "죄송합니다, 질문을 정확히 이해하지 못했습니다. 😅\n\n"
+            "다음과 같이 질문해보세요:\n\n"
             "• \"전국에서 녹지가 가장 좋은 곳은?\"\n"
             "• \"공원 없는 동네 어디야?\"\n"
             "• \"강남구 현황 알려줘\"\n"
-            "• \"공원이 가장 많은 곳은?\"\n"
-            "• \"전국 평균 통계\"\n"
+            "• \"공원이 가장 많은 곳 순위\"\n"
+            "• \"전국 평균 통계 알려줘\"\n"
             "• \"AI 예측 결과 알려줘\"\n"
-            "• \"강남구와 비슷한 지역은?\""
+            "• \"강남구와 비슷한 지역은?\"\n"
+            "• \"이사 가기 좋은 녹지 지역 추천\"\n"
+            "• \"녹지 개선이 필요한 곳은?\""
         ),
         "intent": "unknown",
         "confidence": 0.0,
@@ -633,7 +857,7 @@ def generate_ml_response(question: str, districts: list[dict]) -> dict:
     }
 
 
-# ─── 8. 모델 초기화 (앱 시작 시 호출) ───────────────────────────────────────
+# ─── 9. 모델 초기화 (앱 시작 시 호출) ───────────────────────────────────────
 
 def initialize_models(districts: list[dict]) -> dict:
     """앱 시작 시 모든 ML 모델 학습"""

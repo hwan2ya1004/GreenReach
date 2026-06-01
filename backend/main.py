@@ -40,7 +40,7 @@ def _get_district_list() -> list[dict]:
     ADMIN_SUFFIXES = ("광역시", "특별시", "특별자치시", "특별자치도")
     for p in parks:
         d = p["district"]
-        if d == "기타" or len(d) < 2:
+        if d == "기타" or len(d) < 3:
             continue
         if any(c.isdigit() or c == '-' for c in d):
             continue
@@ -635,8 +635,8 @@ def get_route(
     dest_lng: float = Query(..., description="목적지 경도"),
 ):
     """
-    OSM 보행 네트워크 기반 실제 도보 경로 계산 (경사도 반영)
-    - 실제 도로/보행로 기반 경로
+    OSRM 보행 네트워크 기반 실제 도보 경로 계산 (경사도 반영)
+    - 실제 도로/보행로 기반 경로 (OSRM foot 프로파일)
     - 경사도 패널티 반영 (5%/10%/15% 기준)
     - 경로 좌표 반환 (지도 시각화용)
     """
@@ -673,35 +673,38 @@ def get_accessibility_osm(
 
     if USE_DB:
         try:
-            nearest_row = db.execute(text("""
-                SELECT *,
-                    ST_Distance(
-                        geom::geography,
-                        ST_SetSRID(ST_MakePoint(:lng, :lat), 4326)::geography
-                    ) AS straight_distance
-                FROM parks
-                ORDER BY geom <-> ST_SetSRID(ST_MakePoint(:lng, :lat), 4326)
-                LIMIT 1
+            # 가장 가까운 공원 + 500m/1km 카운트를 단일 쿼리로 처리 (DB 왕복 2→1회)
+            row = db.execute(text("""
+                WITH nearest AS (
+                    SELECT *,
+                        ST_Distance(
+                            geom::geography,
+                            ST_SetSRID(ST_MakePoint(:lng, :lat), 4326)::geography
+                        ) AS straight_distance
+                    FROM parks
+                    ORDER BY geom <-> ST_SetSRID(ST_MakePoint(:lng, :lat), 4326)
+                    LIMIT 1
+                ),
+                counts AS (
+                    SELECT
+                        COUNT(*) FILTER (WHERE ST_DWithin(
+                            geom::geography,
+                            ST_SetSRID(ST_MakePoint(:lng, :lat), 4326)::geography, 500
+                        )) AS count_500,
+                        COUNT(*) FILTER (WHERE ST_DWithin(
+                            geom::geography,
+                            ST_SetSRID(ST_MakePoint(:lng, :lat), 4326)::geography, 1000
+                        )) AS count_1km
+                    FROM parks
+                )
+                SELECT nearest.*, counts.count_500, counts.count_1km
+                FROM nearest, counts
             """), {"lat": lat, "lng": lng}).fetchone()
 
-            if nearest_row:
-                nearest_park = row_to_park(nearest_row)
-
-            counts = db.execute(text("""
-                SELECT
-                    COUNT(*) FILTER (WHERE ST_DWithin(
-                        geom::geography,
-                        ST_SetSRID(ST_MakePoint(:lng, :lat), 4326)::geography, 500
-                    )) AS count_500,
-                    COUNT(*) FILTER (WHERE ST_DWithin(
-                        geom::geography,
-                        ST_SetSRID(ST_MakePoint(:lng, :lat), 4326)::geography, 1000
-                    )) AS count_1km
-                FROM parks
-            """), {"lat": lat, "lng": lng}).fetchone()
-
-            count_500 = int(counts.count_500)
-            count_1km = int(counts.count_1km)
+            if row:
+                nearest_park = row_to_park(row)
+                count_500 = int(row.count_500)
+                count_1km = int(row.count_1km)
 
         except Exception as e:
             print(f"[DB 오류] accessibility/osm: {e}")

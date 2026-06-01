@@ -156,50 +156,39 @@ def add_elevation_to_graph(G):
         return G
 
 
-# ─── Valhalla 공개 API 기반 도보 경로 계산 ───────────────────────────────────
+# ─── OSRM 공개 API 기반 도보 경로 계산 ──────────────────────────────────────
 
-def _fetch_valhalla_route(
+def _fetch_osrm_route(
     origin_lat: float, origin_lng: float,
     dest_lat: float, dest_lng: float,
 ) -> dict | None:
     """
-    Valhalla 공개 API로 실제 보행자 경로 계산
-    valhalla1.openstreetmap.de 무료 공개 API 사용 (pedestrian 모드)
-    OSRM foot 프로파일보다 보행자 경로가 훨씬 정확함
+    OSRM 공개 API로 실제 보행자 경로 계산 (foot 프로파일)
+    router.project-osrm.org 무료 공개 API 사용
+    한국 OSM 데이터 완벽 지원, Valhalla보다 응답 빠름
     """
     try:
         import requests
-        url = "https://valhalla1.openstreetmap.de/route"
-        payload = {
-            "locations": [
-                {"lon": origin_lng, "lat": origin_lat},
-                {"lon": dest_lng, "lat": dest_lat},
-            ],
-            "costing": "pedestrian",
-            "directions_options": {"language": "ko-KR"},
-        }
-        resp = requests.post(url, json=payload, timeout=10)
+        url = (
+            f"https://router.project-osrm.org/route/v1/foot/"
+            f"{origin_lng},{origin_lat};{dest_lng},{dest_lat}"
+            f"?overview=full&geometries=geojson"
+        )
+        resp = requests.get(url, timeout=5)
         if resp.status_code != 200:
-            print(f"[Valhalla] HTTP {resp.status_code}: {resp.text[:200]}")
+            print(f"[OSRM] HTTP {resp.status_code}: {resp.text[:200]}")
             return None
         data = resp.json()
-        trip = data.get("trip")
-        if not trip or trip.get("status") != 0:
+        if data.get("code") != "Ok" or not data.get("routes"):
             return None
 
-        # 전체 거리·시간
-        summary = trip.get("summary", {})
-        dist_m = int(summary.get("length", 0) * 1000)  # km → m
-        duration_s = int(summary.get("time", 0))
+        route = data["routes"][0]
+        dist_m = int(route.get("distance", 0))
+        duration_s = int(route.get("duration", 0))
 
-        # 경로 좌표 디코딩 (Valhalla encoded polyline → [lat, lng])
-        legs = trip.get("legs", [])
-        route_coords: list = []
-        for leg in legs:
-            shape = leg.get("shape", "")
-            if shape:
-                decoded = _decode_polyline6(shape)
-                route_coords.extend(decoded)
+        # GeoJSON coordinates: [[lng, lat], ...] → [[lat, lng], ...]
+        coords = route["geometry"]["coordinates"]
+        route_coords = [[c[1], c[0]] for c in coords]
 
         if not route_coords:
             return None
@@ -210,54 +199,19 @@ def _fetch_valhalla_route(
             "route_coords": route_coords,
         }
     except Exception as e:
-        print(f"[Valhalla] API 호출 실패: {e}")
+        print(f"[OSRM] API 호출 실패: {e}")
         return None
-
-
-def _decode_polyline6(encoded: str) -> list:
-    """
-    Valhalla encoded polyline (precision=6) 디코딩 → [[lat, lng], ...]
-    """
-    result = []
-    index = 0
-    lat = 0
-    lng = 0
-    while index < len(encoded):
-        # 위도
-        b, shift, result_val = 0, 0, 0
-        while True:
-            b = ord(encoded[index]) - 63
-            index += 1
-            result_val |= (b & 0x1F) << shift
-            shift += 5
-            if b < 0x20:
-                break
-        dlat = ~(result_val >> 1) if (result_val & 1) else (result_val >> 1)
-        lat += dlat
-        # 경도
-        b, shift, result_val = 0, 0, 0
-        while True:
-            b = ord(encoded[index]) - 63
-            index += 1
-            result_val |= (b & 0x1F) << shift
-            shift += 5
-            if b < 0x20:
-                break
-        dlng = ~(result_val >> 1) if (result_val & 1) else (result_val >> 1)
-        lng += dlng
-        result.append([lat / 1e6, lng / 1e6])
-    return result
 
 
 def _fetch_elevation_for_route(route_coords: list) -> list[float]:
     """
     Open-Elevation API로 경로 노드 고도 조회
-    최대 100개 포인트 샘플링
+    최대 20개 포인트 샘플링 (속도 최적화)
     """
     try:
         import requests
-        # 경로가 너무 길면 샘플링
-        step = max(1, len(route_coords) // 50)
+        # 경로가 너무 길면 샘플링 (최대 20포인트로 제한)
+        step = max(1, len(route_coords) // 20)
         sampled = route_coords[::step]
         if len(sampled) < 2:
             return []
@@ -265,14 +219,14 @@ def _fetch_elevation_for_route(route_coords: list) -> list[float]:
         resp = requests.post(
             "https://api.open-elevation.com/api/v1/lookup",
             json={"locations": locations},
-            timeout=10,
+            timeout=4,  # 타임아웃 단축: 10s → 4s
         )
         if resp.status_code != 200:
             return []
         results = resp.json().get("results", [])
         return [r.get("elevation", 0) for r in results]
     except Exception as e:
-        print(f"[Elevation] API 호출 실패: {e}")
+        print(f"[Elevation] API 호출 실패 (경사도 생략): {e}")
         return []
 
 
@@ -282,7 +236,8 @@ def calc_walking_route(
     use_elevation: bool = True,
 ) -> dict:
     """
-    Valhalla 공개 API 기반 실제 보행자 경로 계산 + 경사도 반영
+    OSRM 공개 API 기반 실제 보행자 경로 계산 + 경사도 반영
+    (Valhalla 대신 OSRM 사용 - 한국 데이터 완벽 지원, 응답 빠름)
 
     Returns:
         {
@@ -293,15 +248,15 @@ def calc_walking_route(
             "route_coords": [[lat, lng], ...],
             "elevation_gain_m": 총 오르막 고도 (미터),
             "elevation_loss_m": 총 내리막 고도 (미터),
-            "method": "valhalla" | "straight_line",
+            "method": "osrm" | "straight_line",
         }
     """
     straight_dist = haversine(origin_lat, origin_lng, dest_lat, dest_lng)
 
-    # 1. Valhalla로 실제 보행자 경로 계산
-    valhalla_result = _fetch_valhalla_route(origin_lat, origin_lng, dest_lat, dest_lng)
+    # 1. OSRM으로 실제 보행자 경로 계산
+    osrm_result = _fetch_osrm_route(origin_lat, origin_lng, dest_lat, dest_lng)
 
-    if valhalla_result is None:
+    if osrm_result is None:
         # 폴백: 직선거리 × 1.3
         walking_dist = int(straight_dist * 1.3)
         walking_time = max(1, round(walking_dist / 67))
@@ -316,10 +271,10 @@ def calc_walking_route(
             "method": "straight_line",
         }
 
-    route_dist = valhalla_result["distance_m"]
-    route_coords = valhalla_result["route_coords"]
+    route_dist = osrm_result["distance_m"]
+    route_coords = osrm_result["route_coords"]
 
-    # 2. 경사도 계산 (Open-Elevation API)
+    # 2. 경사도 계산 (Open-Elevation API, 타임아웃 4초)
     elevation_gain = 0.0
     elevation_loss = 0.0
     total_slope_penalty = 1.0
@@ -328,7 +283,7 @@ def calc_walking_route(
         elevations = _fetch_elevation_for_route(route_coords)
         if len(elevations) >= 2:
             # 샘플링된 구간 거리 계산
-            step = max(1, len(route_coords) // 50)
+            step = max(1, len(route_coords) // 20)
             sampled = route_coords[::step]
             for i in range(len(elevations) - 1):
                 if i + 1 >= len(sampled):
@@ -357,7 +312,7 @@ def calc_walking_route(
         "route_coords": route_coords,
         "elevation_gain_m": round(elevation_gain, 1),
         "elevation_loss_m": round(elevation_loss, 1),
-        "method": "valhalla",
+        "method": "osrm",
     }
 
 
