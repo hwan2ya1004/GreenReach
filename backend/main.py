@@ -948,6 +948,141 @@ def ai_feedback_stats(db: Session = Depends(get_db)):
     return stats
 
 
+# ─── 관리자 전용 엔드포인트 ──────────────────────────────────────────────────
+
+ADMIN_SECRET_KEY = os.environ.get("ADMIN_SECRET_KEY", "greenreach2026")
+
+
+def _verify_admin(x_admin_key: Optional[str] = None) -> bool:
+    """관리자 키 검증"""
+    return x_admin_key == ADMIN_SECRET_KEY
+
+
+from fastapi import Header, HTTPException
+
+
+@app.get("/api/admin/feedback/list")
+def admin_feedback_list(
+    rating: Optional[int] = Query(None, description="필터: 1=👍, 0=👎, None=전체"),
+    intent: Optional[str] = Query(None, description="의도 필터"),
+    limit: int = Query(50, le=200),
+    offset: int = Query(0, ge=0),
+    x_admin_key: Optional[str] = Header(None),
+    db: Session = Depends(get_db),
+):
+    """관리자 전용: 피드백 목록 조회"""
+    if not _verify_admin(x_admin_key):
+        raise HTTPException(status_code=403, detail="관리자 권한이 필요합니다.")
+
+    # DB 연결 시 실제 데이터 반환
+    if USE_DB:
+        try:
+            where_clauses = []
+            params: dict = {"limit": limit, "offset": offset}
+            if rating is not None:
+                where_clauses.append("rating = :rating")
+                params["rating"] = rating
+            if intent:
+                where_clauses.append("intent = :intent")
+                params["intent"] = intent
+            where_sql = "WHERE " + " AND ".join(where_clauses) if where_clauses else ""
+            rows = db.execute(text(
+                f"SELECT * FROM chat_feedbacks {where_sql} ORDER BY created_at DESC LIMIT :limit OFFSET :offset"
+            ), params).fetchall()
+            total_count = db.execute(text(
+                f"SELECT COUNT(*) FROM chat_feedbacks {where_sql}"
+            ), {k: v for k, v in params.items() if k not in ("limit", "offset")}).scalar()
+            return {
+                "total": total_count,
+                "offset": offset,
+                "limit": limit,
+                "feedbacks": [
+                    {
+                        "id": r.id,
+                        "question": r.question,
+                        "answer": r.answer,
+                        "intent": r.intent,
+                        "confidence": r.confidence,
+                        "rating": r.rating,
+                        "created_at": str(r.created_at),
+                    }
+                    for r in rows
+                ],
+                "source": "db",
+            }
+        except Exception as e:
+            print(f"[Admin] feedback list DB 오류: {e}")
+
+    # 메모리 폴백 (DB 없을 때)
+    feedbacks = ml_model._feedback_memory
+    if rating is not None:
+        feedbacks = [f for f in feedbacks if f["rating"] == rating]
+    if intent:
+        feedbacks = [f for f in feedbacks if f["intent"] == intent]
+    feedbacks_sorted = list(reversed(feedbacks))  # 최신순
+    return {
+        "total": len(feedbacks_sorted),
+        "offset": offset,
+        "limit": limit,
+        "feedbacks": [
+            {
+                "id": i,
+                "question": f["question"],
+                "answer": "",
+                "intent": f["intent"],
+                "confidence": 0,
+                "rating": f["rating"],
+                "created_at": "",
+            }
+            for i, f in enumerate(feedbacks_sorted[offset: offset + limit])
+        ],
+        "source": "memory",
+    }
+
+
+@app.post("/api/admin/feedback/retrain")
+def admin_retrain(x_admin_key: Optional[str] = Header(None)):
+    """관리자 전용: ML 모델 수동 재학습"""
+    if not _verify_admin(x_admin_key):
+        raise HTTPException(status_code=403, detail="관리자 권한이 필요합니다.")
+
+    districts = _get_district_list()
+    if not districts:
+        districts = ml_model.FALLBACK_DISTRICTS
+    result = ml_model.initialize_models(districts)
+    return {
+        "status": "ok",
+        "message": "ML 모델 재학습 완료 (RandomForest + KNN + TF-IDF)",
+        "result": result,
+    }
+
+
+class AddToCorpusRequest(BaseModel):
+    question: str
+    intent: str
+
+
+@app.post("/api/admin/feedback/add-to-corpus")
+def admin_add_to_corpus(
+    req: AddToCorpusRequest,
+    x_admin_key: Optional[str] = Header(None),
+):
+    """관리자 전용: 질문을 특정 의도 코퍼스에 수동 추가 후 재학습"""
+    if not _verify_admin(x_admin_key):
+        raise HTTPException(status_code=403, detail="관리자 권한이 필요합니다.")
+
+    result = ml_model.add_feedback_to_corpus(
+        question=req.question,
+        intent=req.intent,
+        rating=1,  # 강제 학습
+    )
+    return {
+        "status": "ok",
+        "message": f"'{req.question[:40]}' → '{req.intent}' 코퍼스 추가 완료",
+        "learn_result": result,
+    }
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("backend.main:app", host="0.0.0.0", port=8000, reload=True)

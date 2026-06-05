@@ -3,6 +3,7 @@ import Landing from './pages/Landing';
 import MapView from './pages/MapView';
 import Dashboard from './pages/Dashboard';
 import Compare from './pages/Compare';
+import FeedbackAdmin from './pages/FeedbackAdmin';
 import Navbar from './components/Navbar';
 
 function App() {
@@ -15,6 +16,8 @@ function App() {
           <Route path="/map" element={<MapView />} />
           <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/compare" element={<Compare />} />
+          {/* 관리자 전용 - Navbar에 노출 안 함 */}
+          <Route path="/feedback" element={<FeedbackAdmin />} />
         </Routes>
       </div>
     </BrowserRouter>
