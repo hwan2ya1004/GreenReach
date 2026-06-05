@@ -359,8 +359,14 @@ export default function Landing() {
               위치정보 기반 도시 녹지 접근성 시민 플랫폼<br />
               공공데이터포털 · VWorld · OpenStreetMap 데이터 활용
             </div>
-            <div className="text-sm">
-              © 2026 GreenReach. 2026 LBS 스타트업 챌린지
+            <div className="text-sm flex flex-col items-end gap-1">
+              <span>© 2026 GreenReach. 2026 LBS 스타트업 챌린지</span>
+              <Link
+                to="/feedback"
+                className="text-xs text-gray-600 hover:text-gray-400 transition-colors flex items-center gap-1"
+              >
+                🔒 관리자
+              </Link>
             </div>
           </div>
         </div>

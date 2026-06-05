@@ -3,7 +3,7 @@ import {
   Brain, ThumbsUp, ThumbsDown, RefreshCw, Lock, LogOut,
   BarChart2, MessageSquare, BookOpen, Loader2, AlertTriangle,
   CheckCircle, PlusCircle, Filter, ChevronLeft, ChevronRight,
-  Wifi, WifiOff, Database,
+  Wifi, WifiOff, Database, TreePine, MapPin,
 } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 
@@ -135,6 +135,190 @@ function PasswordGate({ onAuth }: { onAuth: () => void }) {
           ※ 관리자 전용 페이지입니다
         </p>
       </div>
+    </div>
+  );
+}
+
+// ─── 시/도 목록 ───────────────────────────────────────────────────────────────
+const SIDO_LIST = [
+  '서울특별시', '부산광역시', '대구광역시', '인천광역시', '광주광역시',
+  '대전광역시', '울산광역시', '세종특별자치시',
+  '경기도', '강원특별자치도', '충청북도', '충청남도',
+  '전북특별자치도', '전라남도', '경상북도', '경상남도', '제주특별자치도',
+];
+
+const RANK_COLORS = ['#16a34a', '#22c55e', '#4ade80', '#86efac', '#bbf7d0'];
+
+interface RankDistrict {
+  district: string;
+  parkCount: number;
+  totalArea: number;
+  avgArea: number;
+}
+
+// ─── 공원 순위 섹션 컴포넌트 ─────────────────────────────────────────────────
+function ParkRankingSection({ adminKey }: { adminKey: string }) {
+  const [selectedCity, setSelectedCity] = useState('');
+  const [rankData, setRankData] = useState<RankDistrict[]>([]);
+  const [rankLoading, setRankLoading] = useState(false);
+  const [rankMode, setRankMode] = useState<'national' | 'city'>('national');
+
+  const headers = { 'Content-Type': 'application/json', 'x-admin-key': adminKey };
+
+  const loadRanking = useCallback(async (city: string) => {
+    setRankLoading(true);
+    try {
+      const params = city ? `?city=${encodeURIComponent(city)}` : '';
+      const res = await fetch(`${API_BASE}/api/admin/park-ranking${params}`, { headers });
+      if (res.ok) {
+        const data = await res.json();
+        setRankData(data.districts || []);
+        setRankMode(data.mode || 'national');
+      }
+    } catch {
+      // 무시
+    } finally {
+      setRankLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadRanking('');
+  }, [loadRanking]);
+
+  const handleCityChange = (city: string) => {
+    setSelectedCity(city);
+    loadRanking(city);
+  };
+
+  const top15 = rankData.slice(0, 15);
+  const maxCount = top15.length > 0 ? top15[0].parkCount : 1;
+
+  const chartData = top15.map((d, i) => ({
+    name: d.district,
+    parkCount: d.parkCount,
+    fill: i < 3 ? RANK_COLORS[i] : i < 5 ? RANK_COLORS[3] : RANK_COLORS[4],
+  }));
+
+  return (
+    <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 mb-6">
+      {/* 섹션 헤더 */}
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-5">
+        <h2 className="font-bold text-gray-800 flex items-center gap-2">
+          <TreePine className="w-4 h-4 text-green-600" />
+          공원 순위 분석
+          <span className="text-xs font-normal text-gray-400">
+            {rankMode === 'city' && selectedCity ? `— ${selectedCity} 내 구/군별` : '— 전국 시/도별'}
+          </span>
+        </h2>
+        <div className="flex items-center gap-2">
+          <MapPin className="w-3.5 h-3.5 text-gray-400" />
+          <select
+            value={selectedCity}
+            onChange={(e) => handleCityChange(e.target.value)}
+            className="text-sm border border-gray-200 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-green-400 bg-white"
+          >
+            <option value="">🗺️ 전국 시/도별</option>
+            {SIDO_LIST.map((sido) => (
+              <option key={sido} value={sido}>{sido}</option>
+            ))}
+          </select>
+          <button
+            onClick={() => loadRanking(selectedCity)}
+            className="p-1.5 rounded-lg bg-gray-100 hover:bg-gray-200 transition-colors"
+            title="새로고침"
+          >
+            <RefreshCw className="w-3.5 h-3.5 text-gray-500" />
+          </button>
+        </div>
+      </div>
+
+      {rankLoading ? (
+        <div className="flex items-center justify-center h-48 gap-2 text-gray-400">
+          <Loader2 className="w-5 h-5 animate-spin" />
+          <span className="text-sm">순위 불러오는 중...</span>
+        </div>
+      ) : rankData.length === 0 ? (
+        <div className="text-center py-12 text-gray-400 text-sm">
+          데이터가 없습니다
+        </div>
+      ) : (
+        <div className="grid lg:grid-cols-2 gap-6">
+          {/* 바 차트 */}
+          <div>
+            <p className="text-xs text-gray-400 mb-3">상위 15개 지역 공원 수</p>
+            <ResponsiveContainer width="100%" height={320}>
+              <BarChart data={chartData} margin={{ top: 5, right: 10, left: -20, bottom: 70 }}>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                <XAxis
+                  dataKey="name"
+                  tick={{ fontSize: 10 }}
+                  angle={-40}
+                  textAnchor="end"
+                  interval={0}
+                />
+                <YAxis tick={{ fontSize: 11 }} />
+                <Tooltip formatter={(v) => [`${v}개`, '공원 수']} />
+                <Bar dataKey="parkCount" radius={[4, 4, 0, 0]}>
+                  {chartData.map((entry, i) => (
+                    <Cell key={i} fill={entry.fill} />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+
+          {/* 순위 테이블 */}
+          <div>
+            <p className="text-xs text-gray-400 mb-3">전체 {rankData.length}개 지역 순위</p>
+            <div className="overflow-y-auto max-h-80 rounded-xl border border-gray-100">
+              <table className="w-full text-sm">
+                <thead className="sticky top-0 bg-gray-50">
+                  <tr>
+                    <th className="text-left px-3 py-2 text-xs font-semibold text-gray-500 w-8">순위</th>
+                    <th className="text-left px-3 py-2 text-xs font-semibold text-gray-500">지역</th>
+                    <th className="text-center px-3 py-2 text-xs font-semibold text-gray-500">공원 수</th>
+                    <th className="text-center px-3 py-2 text-xs font-semibold text-gray-500">총 면적</th>
+                    <th className="text-center px-3 py-2 text-xs font-semibold text-gray-500">비율</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rankData.map((d, i) => (
+                    <tr
+                      key={d.district}
+                      className={i % 2 === 0 ? 'bg-white' : 'bg-gray-50/50'}
+                    >
+                      <td className="px-3 py-2 text-xs text-gray-400 font-medium">
+                        {i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}`}
+                      </td>
+                      <td className="px-3 py-2 text-sm font-medium text-gray-800">{d.district}</td>
+                      <td className="px-3 py-2 text-center text-sm font-bold text-green-700">
+                        {d.parkCount.toLocaleString()}개
+                      </td>
+                      <td className="px-3 py-2 text-center text-xs text-gray-500">
+                        {(d.totalArea / 10000).toFixed(1)}ha
+                      </td>
+                      <td className="px-3 py-2 text-center">
+                        <div className="flex items-center gap-1">
+                          <div className="flex-1 bg-gray-100 rounded-full h-1.5">
+                            <div
+                              className="bg-green-500 h-1.5 rounded-full"
+                              style={{ width: `${Math.round((d.parkCount / maxCount) * 100)}%` }}
+                            />
+                          </div>
+                          <span className="text-xs text-gray-400 w-8 text-right">
+                            {Math.round((d.parkCount / maxCount) * 100)}%
+                          </span>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -426,6 +610,9 @@ function AdminDashboard({ onLogout }: { onLogout: () => void }) {
               문장 추가
             </button>
           </div>
+
+          {/* 공원 순위 분석 섹션 */}
+          <ParkRankingSection adminKey={adminKey} />
 
           {/* 의도별 분포 차트 */}
           {chartData.length > 0 && (

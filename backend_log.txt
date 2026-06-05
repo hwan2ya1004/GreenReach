@@ -1,0 +1,47 @@
+[G[GreenReach] DB 연결 실패 -> CSV 폴백 모드: (psycopg2.OperationalError) connection to server at "localhost" (::1), port 5432 failed: Connection refused (0x0000274D/10061)
+	Is the server running on that host and accepting TCP/IP connections?
+connection to server at "localhost" (127.0.0.1), port 5432 failed: Connection refused (0x0000274D/10061)
+	Is the server running on that host and accepting TCP/IP connections?
+
+(Background on this error at: https://sqlalche.me/e/20/e3q8)
+[GreenReach] ML 모델 초기화: {'status': 'ok', 'districts_trained': 200, 'models': ['RandomForestClassifier', 'KNearestNeighbors', 'TF-IDF']}
+INFO:     127.0.0.1:53265 - "GET /health HTTP/1.1" 200 OK
+ [GreenReach] DB 연결 실패 -> CSV 폴백 모드: (psycopg2.OperationalError) connection to server at "localhost" (::1), port 5432 failed: Connection refused (0x0000274D/10061)
+	Is the server running on that host and accepting TCP/IP connections?
+connection to server at "localhost" (127.0.0.1), port 5432 failed: Connection refused (0x0000274D/10061)
+	Is the server running on that host and accepting TCP/IP connections?
+
+(Background on this error at: https://sqlalche.me/e/20/e3q8)
+[GreenReach] ML 모델 초기화: {'status': 'ok', 'districts_trained': 200, 'models': ['RandomForestClassifier', 'KNearestNeighbors', 'TF-IDF']}
+[GreenReach] DB 연결 실패 -> CSV 폴백 모드: (psycopg2.OperationalError) connection to server at "localhost" (::1), port 5432 failed: Connection refused (0x0000274D/10061)
+	Is the server running on that host and accepting TCP/IP connections?
+connection to server at "localhost" (127.0.0.1), port 5432 failed: Connection refused (0x0000274D/10061)
+	Is the server running on that host and accepting TCP/IP connections?
+
+(Background on this error at: https://sqlalche.me/e/20/e3q8)
+[GreenReach] ML 모델 초기화: {'status': 'ok', 'districts_trained': 200, 'models': ['RandomForestClassifier', 'KNearestNeighbors', 'TF-IDF']}
+INFO:     127.0.0.1:53275 - "POST /api/ai/chat HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53303 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53506 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53507 - "GET /api/districts/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53506 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53507 - "GET /api/districts/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53507 - "OPTIONS /api/ai/chat HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53507 - "POST /api/ai/chat HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53511 - "POST /api/ai/chat HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53512 - "POST /api/ai/chat HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53513 - "POST /api/ai/chat HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53513 - "POST /api/ai/chat HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53513 - "POST /api/ai/chat HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53517 - "POST /api/ai/chat HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53518 - "POST /api/ai/chat HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53585 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53586 - "GET /api/districts/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53587 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53587 - "GET /api/districts/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53587 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53587 - "GET /api/districts/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53598 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53599 - "GET /api/districts/stats HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53600 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:53600 - "GET /api/districts/stats HTTP/1.1" 200 OK

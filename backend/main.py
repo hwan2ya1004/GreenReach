@@ -1083,6 +1083,128 @@ def admin_add_to_corpus(
     }
 
 
+@app.get("/api/admin/park-ranking")
+def admin_park_ranking(
+    city: Optional[str] = Query(None, description="시/도 이름 (예: 서울특별시, 경기도). 없으면 전국 시/도별 집계"),
+    x_admin_key: Optional[str] = Header(None),
+    db: Session = Depends(get_db),
+):
+    """
+    관리자 전용: 공원 순위 조회
+    - city 파라미터 없음: 전국 시/도별 공원 수 집계
+    - city 파라미터 있음: 해당 시/도 내 구/군/시별 공원 수 순위
+    """
+    if not _verify_admin(x_admin_key):
+        raise HTTPException(status_code=403, detail="관리자 권한이 필요합니다.")
+
+    if USE_DB:
+        try:
+            if city:
+                # 특정 시/도 내 구/군별 집계
+                rows = db.execute(text("""
+                    SELECT district,
+                        COUNT(*) AS park_count,
+                        SUM(area) AS total_area,
+                        AVG(area) AS avg_area
+                    FROM parks
+                    WHERE address LIKE :city_pattern
+                      AND district != '기타'
+                      AND LENGTH(district) >= 2
+                      AND district ~ '^[가-힣]+$'
+                      AND (district LIKE '%구' OR district LIKE '%시' OR district LIKE '%군')
+                    GROUP BY district
+                    ORDER BY park_count DESC
+                """), {"city_pattern": f"{city}%"}).fetchall()
+            else:
+                # 전국 시/도별 집계 (address 첫 번째 토큰 기준)
+                rows = db.execute(text("""
+                    SELECT
+                        SPLIT_PART(address, ' ', 1) AS sido,
+                        COUNT(*) AS park_count,
+                        SUM(area) AS total_area,
+                        AVG(area) AS avg_area
+                    FROM parks
+                    WHERE address IS NOT NULL AND address != ''
+                    GROUP BY sido
+                    ORDER BY park_count DESC
+                """)).fetchall()
+
+            if city:
+                return {
+                    "mode": "city",
+                    "city": city,
+                    "total": len(rows),
+                    "db": "postgis",
+                    "districts": [
+                        {
+                            "district": r.district,
+                            "parkCount": r.park_count,
+                            "totalArea": float(r.total_area or 0),
+                            "avgArea": float(r.avg_area or 0),
+                        }
+                        for r in rows
+                    ],
+                }
+            else:
+                return {
+                    "mode": "national",
+                    "total": len(rows),
+                    "db": "postgis",
+                    "districts": [
+                        {
+                            "district": r.sido,
+                            "parkCount": r.park_count,
+                            "totalArea": float(r.total_area or 0),
+                            "avgArea": float(r.avg_area or 0),
+                        }
+                        for r in rows
+                        if r.sido and len(r.sido) >= 2
+                    ],
+                }
+        except Exception as e:
+            print(f"[Admin] park-ranking DB 오류: {e}")
+
+    # CSV 폴백
+    all_parks = load_csv_fallback()
+    if city:
+        filtered = [p for p in all_parks if p.get("address", "").startswith(city)]
+    else:
+        filtered = all_parks
+
+    stats: dict = {}
+    for p in filtered:
+        if city:
+            key = p["district"]
+            if key == "기타" or len(key) < 2:
+                continue
+        else:
+            # 시/도 추출 (address 첫 번째 토큰)
+            addr = p.get("address", "")
+            parts = addr.split()
+            key = parts[0] if parts else "기타"
+            if key == "기타" or len(key) < 2:
+                continue
+
+        if key not in stats:
+            stats[key] = {"district": key, "parkCount": 0, "totalArea": 0.0}
+        stats[key]["parkCount"] += 1
+        stats[key]["totalArea"] += p.get("area", 0)
+
+    result_list = []
+    for s in stats.values():
+        avg = s["totalArea"] / s["parkCount"] if s["parkCount"] > 0 else 0.0
+        result_list.append({**s, "avgArea": avg})
+    result_list.sort(key=lambda x: x["parkCount"], reverse=True)
+
+    return {
+        "mode": "city" if city else "national",
+        "city": city,
+        "total": len(result_list),
+        "db": "csv_fallback",
+        "districts": result_list,
+    }
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("backend.main:app", host="0.0.0.0", port=8000, reload=True)
