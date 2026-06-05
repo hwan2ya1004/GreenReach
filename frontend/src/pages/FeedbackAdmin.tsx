@@ -489,7 +489,7 @@ function MapUpdater({ center, zoom }: { center: [number, number]; zoom: number }
 }
 
 function ParkMap({
-  center, zoom, parks, selectedPark, onSelectPark,
+  center, zoom, parks, selectedPark: _selectedPark, onSelectPark,
 }: {
   center: [number, number];
   zoom: number;
