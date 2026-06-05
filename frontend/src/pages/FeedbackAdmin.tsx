@@ -164,7 +164,19 @@ interface ParkMarker {
   lat: number;
   lng: number;
   area: number;
+  score?: number;
+  grade?: string;
+  parkCount500m?: number;
+  parkCount1km?: number;
 }
+
+const GRADE_STYLE: Record<string, { bg: string; text: string; label: string }> = {
+  A: { bg: 'bg-green-100', text: 'text-green-700', label: 'A' },
+  B: { bg: 'bg-emerald-100', text: 'text-emerald-700', label: 'B' },
+  C: { bg: 'bg-yellow-100', text: 'text-yellow-700', label: 'C' },
+  D: { bg: 'bg-orange-100', text: 'text-orange-700', label: 'D' },
+  F: { bg: 'bg-red-100', text: 'text-red-600', label: 'F' },
+};
 
 // ─── 공원 순위 섹션 컴포넌트 ─────────────────────────────────────────────────
 function ParkRankingSection({ adminKey }: { adminKey: string }) {
@@ -436,16 +448,80 @@ function ParkRankingSection({ adminKey }: { adminKey: string }) {
                   onSelectPark={setSelectedPark}
                 />
               </div>
+              {/* 공원 목록 테이블 (점수 순) */}
+              {parkMarkers.length > 0 && (
+                <div className="mt-4">
+                  <p className="text-xs text-gray-400 mb-2">공원 녹지 점수 순위 (상위 {Math.min(parkMarkers.length, 50)}개)</p>
+                  <div className="overflow-y-auto max-h-64 rounded-xl border border-gray-100">
+                    <table className="w-full text-sm">
+                      <thead className="sticky top-0 bg-gray-50">
+                        <tr>
+                          <th className="text-left px-3 py-2 text-xs font-semibold text-gray-500 w-8">순위</th>
+                          <th className="text-left px-3 py-2 text-xs font-semibold text-gray-500">공원명</th>
+                          <th className="text-center px-3 py-2 text-xs font-semibold text-gray-500 w-16">등급</th>
+                          <th className="text-center px-3 py-2 text-xs font-semibold text-gray-500 w-16">점수</th>
+                          <th className="text-center px-3 py-2 text-xs font-semibold text-gray-500 w-20">면적</th>
+                          <th className="text-center px-3 py-2 text-xs font-semibold text-gray-500 w-20">500m내</th>
+                          <th className="text-center px-3 py-2 text-xs font-semibold text-gray-500 w-20">1km내</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {parkMarkers.slice(0, 50).map((park, i) => {
+                          const gs = GRADE_STYLE[park.grade ?? 'F'] ?? GRADE_STYLE['F'];
+                          return (
+                            <tr
+                              key={park.id}
+                              className={`cursor-pointer transition-colors ${i % 2 === 0 ? 'bg-white' : 'bg-gray-50/50'} hover:bg-green-50`}
+                              onClick={() => setSelectedPark(park)}
+                            >
+                              <td className="px-3 py-2 text-xs text-gray-400 font-medium">
+                                {i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}`}
+                              </td>
+                              <td className="px-3 py-2 text-sm font-medium text-gray-800 max-w-[160px] truncate">{park.name}</td>
+                              <td className="px-3 py-2 text-center">
+                                <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${gs.bg} ${gs.text}`}>
+                                  {gs.label}
+                                </span>
+                              </td>
+                              <td className="px-3 py-2 text-center text-sm font-bold text-gray-700">
+                                {park.score ?? '-'}
+                              </td>
+                              <td className="px-3 py-2 text-center text-xs text-gray-500">
+                                {park.area > 0 ? `${(park.area / 10000).toFixed(1)}ha` : '-'}
+                              </td>
+                              <td className="px-3 py-2 text-center text-xs text-gray-500">
+                                {park.parkCount500m ?? '-'}개
+                              </td>
+                              <td className="px-3 py-2 text-center text-xs text-gray-500">
+                                {park.parkCount1km ?? '-'}개
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
               {selectedPark && (
                 <div className="mt-2 bg-green-50 border border-green-100 rounded-lg px-4 py-2.5 text-sm flex items-start gap-3">
                   <TreePine className="w-4 h-4 text-green-600 flex-shrink-0 mt-0.5" />
-                  <div>
-                    <div className="font-semibold text-green-800">{selectedPark.name}</div>
-                    <div className="text-xs text-gray-500 mt-0.5">
-                      {selectedPark.type} · {selectedPark.area > 0 ? `${(selectedPark.area / 10000).toFixed(2)}ha` : '면적 미상'} · {selectedPark.address}
+                  <div className="flex-1 min-w-0">
+                    <div className="font-semibold text-green-800 flex items-center gap-2">
+                      {selectedPark.name}
+                      {selectedPark.grade && (
+                        <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${GRADE_STYLE[selectedPark.grade]?.bg} ${GRADE_STYLE[selectedPark.grade]?.text}`}>
+                          {selectedPark.grade}등급 {selectedPark.score}점
+                        </span>
+                      )}
                     </div>
+                    <div className="text-xs text-gray-500 mt-0.5">
+                      {selectedPark.type} · {selectedPark.area > 0 ? `${(selectedPark.area / 10000).toFixed(2)}ha` : '면적 미상'}
+                      {selectedPark.parkCount500m !== undefined && ` · 500m내 ${selectedPark.parkCount500m}개 · 1km내 ${selectedPark.parkCount1km}개`}
+                    </div>
+                    <div className="text-xs text-gray-400 mt-0.5 truncate">{selectedPark.address}</div>
                   </div>
-                  <button onClick={() => setSelectedPark(null)} className="ml-auto text-xs text-gray-400 hover:text-gray-600">✕</button>
+                  <button onClick={() => setSelectedPark(null)} className="ml-auto text-xs text-gray-400 hover:text-gray-600 flex-shrink-0">✕</button>
                 </div>
               )}
             </div>
@@ -469,9 +545,22 @@ L.Icon.Default.mergeOptions({
   shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
 });
 
-function createParkIcon(area: number) {
-  const size = area >= 50000 ? 28 : area >= 10000 ? 22 : 16;
-  const color = area >= 50000 ? '#15803d' : area >= 10000 ? '#16a34a' : '#4ade80';
+function createParkIcon(score?: number, area?: number) {
+  // 점수 기반 색상 (점수 없으면 면적 기반 폴백)
+  let color: string;
+  let size: number;
+  if (score !== undefined) {
+    color = score >= 80 ? '#15803d'   // A: 진한 초록
+          : score >= 65 ? '#16a34a'   // B: 초록
+          : score >= 50 ? '#ca8a04'   // C: 노랑
+          : score >= 35 ? '#ea580c'   // D: 주황
+          : '#dc2626';                // F: 빨강
+    size = score >= 80 ? 26 : score >= 65 ? 22 : score >= 50 ? 18 : 14;
+  } else {
+    const a = area ?? 0;
+    size = a >= 50000 ? 28 : a >= 10000 ? 22 : 16;
+    color = a >= 50000 ? '#15803d' : a >= 10000 ? '#16a34a' : '#4ade80';
+  }
   return L.divIcon({
     className: '',
     html: `<div style="width:${size}px;height:${size}px;background:${color};border:2px solid white;border-radius:50%;box-shadow:0 1px 4px rgba(0,0,0,0.3);"></div>`,
@@ -508,14 +597,24 @@ function ParkMap({
         <Marker
           key={park.id}
           position={[park.lat, park.lng]}
-          icon={createParkIcon(park.area)}
+          icon={createParkIcon(park.score, park.area)}
           eventHandlers={{ click: () => onSelectPark(park) }}
         >
           <Popup>
-            <div className="text-xs">
-              <div className="font-bold text-green-700">{park.name}</div>
-              <div className="text-gray-500">{park.type}</div>
-              {park.area > 0 && <div>{(park.area / 10000).toFixed(2)}ha</div>}
+            <div style={{ minWidth: 140 }}>
+              <div style={{ fontWeight: 700, color: '#15803d', marginBottom: 2 }}>{park.name}</div>
+              <div style={{ color: '#6b7280', fontSize: 11 }}>{park.type}</div>
+              {park.area > 0 && <div style={{ fontSize: 11 }}>{(park.area / 10000).toFixed(2)}ha</div>}
+              {park.score !== undefined && (
+                <div style={{ marginTop: 4, display: 'flex', alignItems: 'center', gap: 4 }}>
+                  <span style={{
+                    background: park.grade === 'A' ? '#dcfce7' : park.grade === 'B' ? '#d1fae5' : park.grade === 'C' ? '#fef9c3' : park.grade === 'D' ? '#ffedd5' : '#fee2e2',
+                    color: park.grade === 'A' ? '#15803d' : park.grade === 'B' ? '#065f46' : park.grade === 'C' ? '#854d0e' : park.grade === 'D' ? '#9a3412' : '#991b1b',
+                    fontWeight: 700, fontSize: 12, padding: '1px 6px', borderRadius: 4,
+                  }}>{park.grade}</span>
+                  <span style={{ fontSize: 12, fontWeight: 600 }}>{park.score}점</span>
+                </div>
+              )}
             </div>
           </Popup>
         </Marker>

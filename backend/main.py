@@ -1143,6 +1143,52 @@ def admin_park_ranking(
                     LIMIT 200
                 """), {"addr_pattern": addr_pattern}).fetchall()
 
+                # 각 공원의 녹지 접근성 점수 계산 (상위 50개만, PostGIS 서브쿼리)
+                parks_with_score = []
+                for r in park_rows:
+                    if not (r.lat and r.lng):
+                        continue
+                    try:
+                        counts = db.execute(text("""
+                            SELECT
+                                COUNT(*) FILTER (WHERE ST_DWithin(
+                                    geom::geography,
+                                    ST_SetSRID(ST_MakePoint(:lng, :lat), 4326)::geography, 500
+                                )) AS count_500,
+                                COUNT(*) FILTER (WHERE ST_DWithin(
+                                    geom::geography,
+                                    ST_SetSRID(ST_MakePoint(:lng, :lat), 4326)::geography, 1000
+                                )) AS count_1km
+                            FROM parks
+                        """), {"lat": float(r.lat), "lng": float(r.lng)}).fetchone()
+                        score_data = calc_score_from_parks(
+                            0,  # 공원 자체이므로 거리=0
+                            {"area": float(r.area or 0)},
+                            int(counts.count_500),
+                            int(counts.count_1km),
+                        )
+                        parks_with_score.append({
+                            "id": r.id, "name": r.name, "type": r.type,
+                            "address": r.address or "",
+                            "lat": float(r.lat), "lng": float(r.lng),
+                            "area": float(r.area or 0),
+                            "score": score_data["score"],
+                            "grade": score_data["grade"],
+                            "parkCount500m": score_data["parkCount500m"],
+                            "parkCount1km": score_data["parkCount1km"],
+                        })
+                    except Exception:
+                        parks_with_score.append({
+                            "id": r.id, "name": r.name, "type": r.type,
+                            "address": r.address or "",
+                            "lat": float(r.lat), "lng": float(r.lng),
+                            "area": float(r.area or 0),
+                            "score": 0, "grade": "F",
+                            "parkCount500m": 0, "parkCount1km": 0,
+                        })
+
+                parks_with_score.sort(key=lambda x: x["score"], reverse=True)
+
                 return {
                     "mode": "district",
                     "city": city,
@@ -1159,16 +1205,7 @@ def admin_park_ranking(
                         for r in dong_rows
                         if r.dong and r.dong != "기타"
                     ],
-                    "parks": [
-                        {
-                            "id": r.id, "name": r.name, "type": r.type,
-                            "address": r.address or "",
-                            "lat": float(r.lat), "lng": float(r.lng),
-                            "area": float(r.area or 0),
-                        }
-                        for r in park_rows
-                        if r.lat and r.lng
-                    ],
+                    "parks": parks_with_score,
                 }
             elif city:
                 # 특정 시/도 내 구/군별 집계
@@ -1253,15 +1290,25 @@ def admin_park_ranking(
             avg = s["totalArea"] / s["parkCount"] if s["parkCount"] > 0 else 0.0
             result_list.append({**s, "avgArea": avg})
         result_list.sort(key=lambda x: x["parkCount"], reverse=True)
-        park_list = [
-            {"id": p["id"], "name": p["name"], "type": p["type"],
-             "address": p["address"], "lat": p["lat"], "lng": p["lng"], "area": p["area"]}
-            for p in filtered[:200]
-        ]
+        # CSV 폴백에서도 녹지 점수 계산
+        csv_parks_with_score = []
+        for p in filtered[:200]:
+            distances_all = [(haversine(p["lat"], p["lng"], q["lat"], q["lng"]), q)
+                             for q in all_parks]
+            c500 = sum(1 for d, _ in distances_all if d <= 500)
+            c1km = sum(1 for d, _ in distances_all if d <= 1000)
+            sd = calc_score_from_parks(0, {"area": p["area"]}, c500, c1km)
+            csv_parks_with_score.append({
+                "id": p["id"], "name": p["name"], "type": p["type"],
+                "address": p["address"], "lat": p["lat"], "lng": p["lng"], "area": p["area"],
+                "score": sd["score"], "grade": sd["grade"],
+                "parkCount500m": sd["parkCount500m"], "parkCount1km": sd["parkCount1km"],
+            })
+        csv_parks_with_score.sort(key=lambda x: x["score"], reverse=True)
         return {
             "mode": "district", "city": city, "district": district,
             "total": len(result_list), "db": "csv_fallback",
-            "districts": result_list, "parks": park_list,
+            "districts": result_list, "parks": csv_parks_with_score,
         }
     elif city:
         filtered = [p for p in all_parks if p.get("address", "").startswith(city)]
