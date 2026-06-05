@@ -713,7 +713,7 @@ function FeedbackRow({
         <tr className="bg-purple-50/50">
           <td colSpan={7} className="px-6 py-3">
             <div className="text-xs text-gray-500 font-semibold mb-1">AI 응답 미리보기</div>
-            <div className="text-sm text-gray-700 whitespace-pre-wrap line-clamp-4 bg-white rounded-lg p-3 border border-purple-100">
+            <div className="text-sm text-gray-700 whitespace-pre-wrap bg-white rounded-lg p-3 border border-purple-100 max-h-60 overflow-y-auto">
               {fb.answer}
             </div>
           </td>
