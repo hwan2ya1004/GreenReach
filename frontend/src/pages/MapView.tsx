@@ -404,16 +404,23 @@ export default function MapView() {
     setLocationError('');
   }, []);
 
-  const handleShowRoute = async () => {
+  const handleShowRoute = () => {
     if (!score?.nearestPark) return;
-    setRouteLoading(true);
-    const coords = await fetchWalkingRoute(
-      userLat, userLng,
-      score.nearestPark.lat, score.nearestPark.lng
-    );
-    setRouteCoords(coords);
-    setShowRoute(true);
-    setRouteLoading(false);
+    // 백엔드 /api/accessibility/osm 응답에 routeCoords가 이미 포함되어 있음
+    // → 중복 OSRM 호출 없이 즉시 표시
+    if (score.routeCoords && score.routeCoords.length > 1) {
+      setRouteCoords(score.routeCoords as [number, number][]);
+      setShowRoute(true);
+    } else {
+      // routeCoords가 없는 경우(폴백)에만 OSRM 직접 호출
+      setRouteLoading(true);
+      fetchWalkingRoute(userLat, userLng, score.nearestPark.lat, score.nearestPark.lng)
+        .then(coords => {
+          setRouteCoords(coords);
+          setShowRoute(true);
+        })
+        .finally(() => setRouteLoading(false));
+    }
   };
 
   // 팝업 내 경로 표시 버튼 핸들러

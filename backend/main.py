@@ -111,6 +111,18 @@ async def lifespan(app: FastAPI):
             Base.metadata.create_all(bind=engine)
         except Exception as e:
             print(f"[GreenReach] 테이블 생성 실패: {e}")
+
+        # PostGIS 공간 인덱스 (GIST) 자동 생성 - 없으면 ST_DWithin 전체 테이블 스캔 발생
+        try:
+            with engine.connect() as conn:
+                conn.execute(text(
+                    "CREATE INDEX IF NOT EXISTS idx_parks_geom ON parks USING GIST(geom)"
+                ))
+                conn.commit()
+                print("[GreenReach] PostGIS GIST 인덱스 확인/생성 완료")
+        except Exception as e:
+            print(f"[GreenReach] GIST 인덱스 생성 실패 (무시): {e}")
+
         # district 컬럼 재파싱 (주소 파싱 로직 개선 반영)
         _fix_districts_in_db()
 

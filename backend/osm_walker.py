@@ -174,7 +174,7 @@ def _fetch_osrm_route(
             f"{origin_lng},{origin_lat};{dest_lng},{dest_lat}"
             f"?overview=full&geometries=geojson"
         )
-        resp = requests.get(url, timeout=5)
+        resp = requests.get(url, timeout=3)
         if resp.status_code != 200:
             print(f"[OSRM] HTTP {resp.status_code}: {resp.text[:200]}")
             return None
@@ -219,7 +219,7 @@ def _fetch_elevation_for_route(route_coords: list) -> list[float]:
         resp = requests.post(
             "https://api.open-elevation.com/api/v1/lookup",
             json={"locations": locations},
-            timeout=4,  # 타임아웃 단축: 10s → 4s
+            timeout=1,  # 타임아웃 단축: 4s → 1s (느린 공개 API 대응)
         )
         if resp.status_code != 200:
             return []
@@ -233,11 +233,14 @@ def _fetch_elevation_for_route(route_coords: list) -> list[float]:
 def calc_walking_route(
     origin_lat: float, origin_lng: float,
     dest_lat: float, dest_lng: float,
-    use_elevation: bool = True,
+    use_elevation: bool = False,  # 기본 비활성화: Open-Elevation 공개 API가 느려 응답 지연 유발
 ) -> dict:
     """
     OSRM 공개 API 기반 실제 보행자 경로 계산 + 경사도 반영
     (Valhalla 대신 OSRM 사용 - 한국 데이터 완벽 지원, 응답 빠름)
+
+    use_elevation=False (기본값): OSRM 경로만 사용, 빠른 응답
+    use_elevation=True: Open-Elevation API 추가 호출 (1~3초 추가 소요)
 
     Returns:
         {
