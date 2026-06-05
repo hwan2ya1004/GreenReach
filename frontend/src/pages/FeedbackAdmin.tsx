@@ -193,7 +193,7 @@ function ParkRankingSection({ adminKey }: { adminKey: string }) {
 
   const headers = { 'Content-Type': 'application/json', 'x-admin-key': adminKey };
 
-  const loadRanking = useCallback(async (city: string, district: string) => {
+  const loadRanking = async (city: string, district: string) => {
     setRankLoading(true);
     setParkMarkers([]);
     setSelectedPark(null);
@@ -202,7 +202,9 @@ function ParkRankingSection({ adminKey }: { adminKey: string }) {
       if (city) params.set('city', city);
       if (district) params.set('district', district);
       const qs = params.toString() ? `?${params.toString()}` : '';
-      const res = await fetch(`${API_BASE}/api/admin/park-ranking${qs}`, { headers });
+      const res = await fetch(`${API_BASE}/api/admin/park-ranking${qs}`, {
+        headers: { 'Content-Type': 'application/json', 'x-admin-key': adminKey },
+      });
       if (res.ok) {
         const data = await res.json();
         setRankData(data.districts || []);
@@ -231,11 +233,11 @@ function ParkRankingSection({ adminKey }: { adminKey: string }) {
     } finally {
       setRankLoading(false);
     }
-  }, []);
+  };
 
   useEffect(() => {
     loadRanking('', '');
-  }, [loadRanking]);
+  }, []);
 
   const handleCityChange = (city: string) => {
     setSelectedCity(city);
@@ -244,9 +246,9 @@ function ParkRankingSection({ adminKey }: { adminKey: string }) {
     loadRanking(city, '');
   };
 
-  const handleDistrictChange = (district: string) => {
+  const handleDistrictChange = (city: string, district: string) => {
     setSelectedDistrict(district);
-    loadRanking(selectedCity, district);
+    loadRanking(city, district);
   };
 
   const top15 = rankData.slice(0, 15);
@@ -291,7 +293,7 @@ function ParkRankingSection({ adminKey }: { adminKey: string }) {
           {selectedCity && districtList.length > 0 && (
             <select
               value={selectedDistrict}
-              onChange={(e) => handleDistrictChange(e.target.value)}
+              onChange={(e) => handleDistrictChange(selectedCity, e.target.value)}
               className="text-sm border border-gray-200 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-green-400 bg-white"
             >
               <option value="">🏙️ 구/군 선택 (동 단위)</option>
@@ -362,7 +364,7 @@ function ParkRankingSection({ adminKey }: { adminKey: string }) {
                     dataKey="parkCount"
                     radius={[4, 4, 0, 0]}
                     onClick={(data) => {
-                      if (rankMode === 'city') handleDistrictChange(data.name);
+                      if (rankMode === 'city') handleDistrictChange(selectedCity, data.name);
                     }}
                     style={{ cursor: rankMode === 'city' ? 'pointer' : 'default' }}
                   >
@@ -396,7 +398,7 @@ function ParkRankingSection({ adminKey }: { adminKey: string }) {
                       <tr
                         key={d.district}
                         className={`${i % 2 === 0 ? 'bg-white' : 'bg-gray-50/50'} ${rankMode === 'city' ? 'cursor-pointer hover:bg-green-50' : ''}`}
-                        onClick={() => rankMode === 'city' && handleDistrictChange(d.district)}
+                        onClick={() => rankMode === 'city' && handleDistrictChange(selectedCity, d.district)}
                       >
                         <td className="px-3 py-2 text-xs text-gray-400 font-medium">
                           {i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}`}
