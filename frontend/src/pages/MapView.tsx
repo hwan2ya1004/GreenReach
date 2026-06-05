@@ -337,8 +337,10 @@ export default function MapView() {
     setSelectedPark(null);
 
     try {
+      // /api/accessibility: PostGIS 직선거리 기반 → 즉시 반환 (OSRM 호출 없음)
+      // 경로 시각화는 "도보 경로" 버튼 클릭 시에만 OSRM 호출
       const [scoreRes, nearbyRes] = await Promise.all([
-        fetch(`${API_BASE}/api/accessibility/osm?lat=${lat}&lng=${lng}`),
+        fetch(`${API_BASE}/api/accessibility?lat=${lat}&lng=${lng}`),
         fetch(`${API_BASE}/api/parks/nearby?lat=${lat}&lng=${lng}&radius=${filter.maxDistance}&limit=20`),
       ]);
 
@@ -997,7 +999,7 @@ export default function MapView() {
                 <Loader2 className="w-6 h-6 text-green-600 animate-spin flex-shrink-0" />
                 <div>
                   <div className="text-sm font-semibold text-gray-800">분석 중...</div>
-                  <div className="text-xs text-gray-500">OSRM 보행 경로 + 경사도 계산</div>
+                  <div className="text-xs text-gray-500">PostGIS 공간 분석 중...</div>
                 </div>
               </div>
             )}
