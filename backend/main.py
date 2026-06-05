@@ -1141,50 +1141,43 @@ def admin_park_ranking(
                     WHERE address LIKE :addr_pattern
                       AND lat IS NOT NULL AND lng IS NOT NULL
                     ORDER BY area DESC NULLS LAST
-                    LIMIT 100
+                    LIMIT 200
                 """), {"addr_pattern": addr_pattern}).fetchall()
 
-                # 각 공원의 녹지 접근성 점수 계산 — LATERAL 배치 쿼리 (N회 → 1회)
-                # 대상 공원 ID 목록을 IN 절로 한정하여 CROSS JOIN 범위 최소화
-                park_ids = [r.id for r in park_rows]
-                if park_ids:
-                    id_placeholders = ",".join(f":id_{i}" for i in range(len(park_ids)))
-                    id_params = {f"id_{i}": pid for i, pid in enumerate(park_ids)}
-                    score_rows = db.execute(text(f"""
-                        SELECT
-                            p.id,
-                            (SELECT COUNT(*) FROM parks n
-                             WHERE ST_DWithin(p.geom::geography, n.geom::geography, 500)
-                            ) AS count_500,
-                            (SELECT COUNT(*) FROM parks n
-                             WHERE ST_DWithin(p.geom::geography, n.geom::geography, 1000)
-                            ) AS count_1km
-                        FROM parks p
-                        WHERE p.id IN ({id_placeholders})
-                    """), id_params).fetchall()
-                    score_map = {{r.id: (int(r.count_500), int(r.count_1km)) for r in score_rows}}
-                else:
-                    score_map = {{}}
-
+                # 점수 계산: 면적 기반으로 즉시 계산 (DB 추가 쿼리 없음 → 빠름)
+                # 주변 공원 밀도는 같은 구 내 공원 수로 근사
+                total_in_district = len(park_rows)
                 parks_with_score = []
                 for r in park_rows:
-                    if not (r.lat and r.lng):
-                        continue
-                    c500, c1km = score_map.get(r.id, (0, 0))
-                    score_data = calc_score_from_parks(
-                        0,
-                        {"area": float(r.area or 0)},
-                        c500, c1km,
-                    )
+                    area = float(r.area or 0)
+                    # 면적 점수 (0~50)
+                    if area >= 100000:
+                        area_score = 50
+                    elif area >= 50000:
+                        area_score = 42
+                    elif area >= 10000:
+                        area_score = 32
+                    elif area >= 3000:
+                        area_score = 22
+                    elif area >= 1000:
+                        area_score = 14
+                    else:
+                        area_score = 6
+                    # 밀도 점수: 같은 구 내 공원 수 기반 (0~30)
+                    density_score = min(30, total_in_district * 2)
+                    # 기본 접근성 점수 (공원 자체이므로 거리=0 → 최대 dist_score)
+                    dist_score = 20
+                    total = area_score + density_score + dist_score
+                    grade = "A" if total >= 80 else "B" if total >= 65 else "C" if total >= 50 else "D" if total >= 35 else "F"
                     parks_with_score.append({
                         "id": r.id, "name": r.name, "type": r.type,
                         "address": r.address or "",
                         "lat": float(r.lat), "lng": float(r.lng),
-                        "area": float(r.area or 0),
-                        "score": score_data["score"],
-                        "grade": score_data["grade"],
-                        "parkCount500m": c500,
-                        "parkCount1km": c1km,
+                        "area": area,
+                        "score": total,
+                        "grade": grade,
+                        "parkCount500m": None,
+                        "parkCount1km": None,
                     })
 
                 parks_with_score.sort(key=lambda x: x["score"], reverse=True)

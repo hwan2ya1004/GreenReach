@@ -490,10 +490,10 @@ function ParkRankingSection({ adminKey }: { adminKey: string }) {
                                 {park.area > 0 ? `${(park.area / 10000).toFixed(1)}ha` : '-'}
                               </td>
                               <td className="px-3 py-2 text-center text-xs text-gray-500">
-                                {park.parkCount500m ?? '-'}개
+                                {park.parkCount500m != null ? `${park.parkCount500m}개` : '-'}
                               </td>
                               <td className="px-3 py-2 text-center text-xs text-gray-500">
-                                {park.parkCount1km ?? '-'}개
+                                {park.parkCount1km != null ? `${park.parkCount1km}개` : '-'}
                               </td>
                             </tr>
                           );
