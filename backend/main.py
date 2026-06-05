@@ -1139,53 +1139,53 @@ def admin_park_ranking(
                     SELECT id, name, type, address, lat, lng, area
                     FROM parks
                     WHERE address LIKE :addr_pattern
+                      AND lat IS NOT NULL AND lng IS NOT NULL
                     ORDER BY area DESC NULLS LAST
-                    LIMIT 200
+                    LIMIT 100
                 """), {"addr_pattern": addr_pattern}).fetchall()
 
-                # 각 공원의 녹지 접근성 점수 계산 (상위 50개만, PostGIS 서브쿼리)
+                # 각 공원의 녹지 접근성 점수 계산 — LATERAL 배치 쿼리 (N회 → 1회)
+                # 대상 공원 ID 목록을 IN 절로 한정하여 CROSS JOIN 범위 최소화
+                park_ids = [r.id for r in park_rows]
+                if park_ids:
+                    id_placeholders = ",".join(f":id_{i}" for i in range(len(park_ids)))
+                    id_params = {f"id_{i}": pid for i, pid in enumerate(park_ids)}
+                    score_rows = db.execute(text(f"""
+                        SELECT
+                            p.id,
+                            (SELECT COUNT(*) FROM parks n
+                             WHERE ST_DWithin(p.geom::geography, n.geom::geography, 500)
+                            ) AS count_500,
+                            (SELECT COUNT(*) FROM parks n
+                             WHERE ST_DWithin(p.geom::geography, n.geom::geography, 1000)
+                            ) AS count_1km
+                        FROM parks p
+                        WHERE p.id IN ({id_placeholders})
+                    """), id_params).fetchall()
+                    score_map = {{r.id: (int(r.count_500), int(r.count_1km)) for r in score_rows}}
+                else:
+                    score_map = {{}}
+
                 parks_with_score = []
                 for r in park_rows:
                     if not (r.lat and r.lng):
                         continue
-                    try:
-                        counts = db.execute(text("""
-                            SELECT
-                                COUNT(*) FILTER (WHERE ST_DWithin(
-                                    geom::geography,
-                                    ST_SetSRID(ST_MakePoint(:lng, :lat), 4326)::geography, 500
-                                )) AS count_500,
-                                COUNT(*) FILTER (WHERE ST_DWithin(
-                                    geom::geography,
-                                    ST_SetSRID(ST_MakePoint(:lng, :lat), 4326)::geography, 1000
-                                )) AS count_1km
-                            FROM parks
-                        """), {"lat": float(r.lat), "lng": float(r.lng)}).fetchone()
-                        score_data = calc_score_from_parks(
-                            0,  # 공원 자체이므로 거리=0
-                            {"area": float(r.area or 0)},
-                            int(counts.count_500),
-                            int(counts.count_1km),
-                        )
-                        parks_with_score.append({
-                            "id": r.id, "name": r.name, "type": r.type,
-                            "address": r.address or "",
-                            "lat": float(r.lat), "lng": float(r.lng),
-                            "area": float(r.area or 0),
-                            "score": score_data["score"],
-                            "grade": score_data["grade"],
-                            "parkCount500m": score_data["parkCount500m"],
-                            "parkCount1km": score_data["parkCount1km"],
-                        })
-                    except Exception:
-                        parks_with_score.append({
-                            "id": r.id, "name": r.name, "type": r.type,
-                            "address": r.address or "",
-                            "lat": float(r.lat), "lng": float(r.lng),
-                            "area": float(r.area or 0),
-                            "score": 0, "grade": "F",
-                            "parkCount500m": 0, "parkCount1km": 0,
-                        })
+                    c500, c1km = score_map.get(r.id, (0, 0))
+                    score_data = calc_score_from_parks(
+                        0,
+                        {"area": float(r.area or 0)},
+                        c500, c1km,
+                    )
+                    parks_with_score.append({
+                        "id": r.id, "name": r.name, "type": r.type,
+                        "address": r.address or "",
+                        "lat": float(r.lat), "lng": float(r.lng),
+                        "area": float(r.area or 0),
+                        "score": score_data["score"],
+                        "grade": score_data["grade"],
+                        "parkCount500m": c500,
+                        "parkCount1km": c1km,
+                    })
 
                 parks_with_score.sort(key=lambda x: x["score"], reverse=True)
 
