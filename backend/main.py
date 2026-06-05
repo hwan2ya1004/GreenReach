@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import text
 
 from .database import engine, Base, get_db, DATABASE_URL
+from .models import ChatFeedback
 from .osm_walker import calc_walking_route, calc_accessibility_score_osm
 from . import ml_model
 
@@ -85,9 +86,9 @@ def _fix_districts_in_db():
                         batch
                     )
                 conn.commit()
-                print(f"[GreenReach] ✅ district 재파싱 완료: {len(updates)}개 레코드 업데이트")
+                print(f"[GreenReach] district 재파싱 완료: {len(updates)}개 레코드 업데이트")
     except Exception as e:
-        print(f"[GreenReach] ⚠️  district 재파싱 실패: {e}")
+        print(f"[GreenReach] district 재파싱 실패: {e}")
 
 
 @asynccontextmanager
@@ -99,17 +100,17 @@ async def lifespan(app: FastAPI):
         with engine.connect() as conn:
             conn.execute(text("SELECT 1"))
         USE_DB = True
-        print("[GreenReach] ✅ PostgreSQL + PostGIS 연결 성공")
+        print("[GreenReach] PostgreSQL + PostGIS 연결 성공")
     except Exception as e:
         USE_DB = False
-        print(f"[GreenReach] ⚠️  DB 연결 실패 → CSV 폴백 모드: {e}")
+        print(f"[GreenReach] DB 연결 실패 -> CSV 폴백 모드: {e}")
 
     # 2. 테이블 생성 및 district 재파싱 (DB 연결 성공 시)
     if USE_DB:
         try:
             Base.metadata.create_all(bind=engine)
         except Exception as e:
-            print(f"[GreenReach] ⚠️  테이블 생성 실패: {e}")
+            print(f"[GreenReach] 테이블 생성 실패: {e}")
         # district 컬럼 재파싱 (주소 파싱 로직 개선 반영)
         _fix_districts_in_db()
 
@@ -119,11 +120,11 @@ async def lifespan(app: FastAPI):
         # CSV/DB 모두 없는 배포 환경이면 폴백 샘플 데이터 사용
         if not districts:
             districts = ml_model.FALLBACK_DISTRICTS
-            print("[GreenReach] ℹ️  CSV/DB 없음 → 폴백 샘플 데이터로 ML 모델 초기화")
+            print("[GreenReach] CSV/DB 없음 -> 폴백 샘플 데이터로 ML 모델 초기화")
         result = ml_model.initialize_models(districts)
-        print(f"[GreenReach] 🤖 ML 모델 초기화: {result}")
+        print(f"[GreenReach] ML 모델 초기화: {result}")
     except Exception as e:
-        print(f"[GreenReach] ⚠️  ML 모델 초기화 실패: {e}")
+        print(f"[GreenReach] ML 모델 초기화 실패: {e}")
 
     yield
 
@@ -848,6 +849,91 @@ def ai_status():
         "models": ["RandomForestClassifier", "KNearestNeighbors", "TF-IDF Vectorizer"],
         "version": "scikit-learn ML v1.0",
     }
+
+
+# ─── 피드백 엔드포인트 ────────────────────────────────────────────────────────
+
+class FeedbackRequest(BaseModel):
+    question: str
+    answer: str
+    intent: str
+    confidence: float
+    rating: int  # 1=👍 좋아요, 0=👎 나빠요
+
+
+@app.post("/api/ai/feedback")
+def ai_feedback(req: FeedbackRequest, db: Session = Depends(get_db)):
+    """
+    AI 챗봇 피드백 수집 + 즉시 학습 반영
+    - rating=1 (👍): 질문을 TF-IDF 코퍼스에 추가 → 즉시 재학습
+    - rating=0 (👎): DB에 기록만 (관리자 검토용)
+    - DB 연결 시 chat_feedbacks 테이블에 영구 저장
+    - DB 없을 시 메모리에 임시 저장
+    """
+    # 1. ML 모델에 피드백 반영 (TF-IDF 재학습)
+    learn_result = ml_model.add_feedback_to_corpus(
+        question=req.question,
+        intent=req.intent,
+        rating=req.rating,
+    )
+
+    # 2. DB에 영구 저장 (DB 연결 시)
+    db_saved = False
+    if USE_DB:
+        try:
+            feedback = ChatFeedback(
+                question=req.question,
+                answer=req.answer,
+                intent=req.intent,
+                confidence=req.confidence,
+                rating=req.rating,
+            )
+            db.add(feedback)
+            db.commit()
+            db_saved = True
+        except Exception as e:
+            print(f"[피드백 DB 저장 실패] {e}")
+            db.rollback()
+
+    return {
+        "status": "ok",
+        "learn_result": learn_result,
+        "db_saved": db_saved,
+        "message": (
+            f"{'👍 좋아요' if req.rating == 1 else '👎 나빠요'} 피드백이 기록되었습니다."
+            + (" TF-IDF 모델이 재학습되었습니다! 🧠" if learn_result.get("status") == "learned" else "")
+        ),
+    }
+
+
+@app.get("/api/ai/feedback/stats")
+def ai_feedback_stats(db: Session = Depends(get_db)):
+    """
+    피드백 통계 조회
+    - 총 피드백 수, 긍정/부정 비율
+    - 의도별 분포
+    - 현재 코퍼스 크기 (학습 데이터 수)
+    """
+    # ML 모델 메모리 통계
+    stats = ml_model.get_feedback_stats()
+
+    # DB 통계 (DB 연결 시)
+    if USE_DB:
+        try:
+            total = db.execute(text("SELECT COUNT(*) FROM chat_feedbacks")).scalar()
+            positive = db.execute(text("SELECT COUNT(*) FROM chat_feedbacks WHERE rating = 1")).scalar()
+            negative = db.execute(text("SELECT COUNT(*) FROM chat_feedbacks WHERE rating = 0")).scalar()
+            intent_rows = db.execute(text(
+                "SELECT intent, COUNT(*) as cnt FROM chat_feedbacks GROUP BY intent ORDER BY cnt DESC"
+            )).fetchall()
+            stats["db_total"] = total
+            stats["db_positive"] = positive
+            stats["db_negative"] = negative
+            stats["db_intent_distribution"] = {r.intent: r.cnt for r in intent_rows}
+        except Exception as e:
+            stats["db_error"] = str(e)
+
+    return stats
 
 
 if __name__ == "__main__":

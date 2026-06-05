@@ -2,9 +2,23 @@
 GreenReach DB 모델
 PostGIS GEOMETRY 컬럼 포함
 """
-from sqlalchemy import Column, String, Float, Boolean, Text, Integer
+from sqlalchemy import Column, String, Float, Boolean, Text, Integer, DateTime
+from sqlalchemy.sql import func
 from geoalchemy2 import Geometry
 from .database import Base
+
+
+class ChatFeedback(Base):
+    """AI 챗봇 피드백 테이블 — 사용자 👍/👎 반응을 저장해 모델 진화에 활용"""
+    __tablename__ = "chat_feedbacks"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    question = Column(Text, nullable=False)       # 사용자 질문
+    answer = Column(Text, nullable=False)          # AI 응답
+    intent = Column(String(50))                    # 분류된 의도 (best_district 등)
+    confidence = Column(Float)                     # 의도 분류 신뢰도 (0~1)
+    rating = Column(Integer, nullable=False)       # 1=👍 좋아요, 0=👎 나빠요
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
 class Park(Base):

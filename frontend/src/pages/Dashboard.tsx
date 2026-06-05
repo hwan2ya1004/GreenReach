@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from 'recharts';
-import { Building2, AlertTriangle, TrendingUp, Download, MessageSquare, Send, Brain, Loader2, Database, Wifi, WifiOff, RefreshCw } from 'lucide-react';
+import { Building2, AlertTriangle, TrendingUp, Download, MessageSquare, Send, Brain, Loader2, Database, Wifi, WifiOff, RefreshCw, ThumbsUp, ThumbsDown } from 'lucide-react';
 import { getScoreColor, getScoreBgColor } from '../utils/accessibility';
 import type { ChatMessage } from '../types';
 
@@ -8,6 +8,193 @@ const API_BASE = import.meta.env.VITE_API_BASE
   || (typeof window !== 'undefined' && window.location.hostname !== 'localhost'
     ? 'https://greenreach-api.onrender.com'
     : 'http://localhost:8000');
+
+// ─── 오프라인 폴백 데이터 (백엔드 없을 때 사용) ──────────────────────────────
+const FALLBACK_DISTRICTS = [
+  { district: '화성시', parkCount: 592, totalArea: 7340000, avgArea: 12398.6 },
+  { district: '평택시', parkCount: 535, totalArea: 8267000, avgArea: 15452.3 },
+  { district: '창원시', parkCount: 469, totalArea: 18285000, avgArea: 38986.1 },
+  { district: '청주시', parkCount: 432, totalArea: 15240000, avgArea: 35277.8 },
+  { district: '용인시', parkCount: 340, totalArea: 7570000, avgArea: 22264.7 },
+  { district: '수원시', parkCount: 335, totalArea: 7111000, avgArea: 21227.0 },
+  { district: '고양시', parkCount: 281, totalArea: 6750000, avgArea: 24022.8 },
+  { district: '성남시', parkCount: 265, totalArea: 5820000, avgArea: 21962.3 },
+  { district: '부천시', parkCount: 248, totalArea: 3940000, avgArea: 15887.1 },
+  { district: '안산시', parkCount: 231, totalArea: 4560000, avgArea: 19740.3 },
+  { district: '전주시', parkCount: 218, totalArea: 6230000, avgArea: 28577.1 },
+  { district: '천안시', parkCount: 205, totalArea: 5870000, avgArea: 28634.1 },
+  { district: '남양주시', parkCount: 198, totalArea: 4320000, avgArea: 21818.2 },
+  { district: '안양시', parkCount: 187, totalArea: 3210000, avgArea: 17165.8 },
+  { district: '강남구', parkCount: 175, totalArea: 2980000, avgArea: 17028.6 },
+  { district: '서초구', parkCount: 162, totalArea: 3450000, avgArea: 21296.3 },
+  { district: '송파구', parkCount: 158, totalArea: 2760000, avgArea: 17468.4 },
+  { district: '노원구', parkCount: 145, totalArea: 2340000, avgArea: 16137.9 },
+  { district: '은평구', parkCount: 138, totalArea: 1980000, avgArea: 14347.8 },
+  { district: '마포구', parkCount: 125, totalArea: 1650000, avgArea: 13200.0 },
+  { district: '종로구', parkCount: 118, totalArea: 2100000, avgArea: 17796.6 },
+  { district: '중구', parkCount: 52, totalArea: 680000, avgArea: 13076.9 },
+  { district: '동대문구', parkCount: 48, totalArea: 590000, avgArea: 12291.7 },
+  { district: '중랑구', parkCount: 45, totalArea: 520000, avgArea: 11555.6 },
+  { district: '성동구', parkCount: 42, totalArea: 480000, avgArea: 11428.6 },
+  { district: '광진구', parkCount: 38, totalArea: 430000, avgArea: 11315.8 },
+  { district: '동작구', parkCount: 35, totalArea: 390000, avgArea: 11142.9 },
+  { district: '관악구', parkCount: 32, totalArea: 350000, avgArea: 10937.5 },
+  { district: '금천구', parkCount: 28, totalArea: 290000, avgArea: 10357.1 },
+  { district: '구로구', parkCount: 25, totalArea: 260000, avgArea: 10400.0 },
+];
+
+type FallbackDistrict = typeof FALLBACK_DISTRICTS[0];
+
+function _computeBaseScore(d: FallbackDistrict, maxCount: number): number {
+  const countScore = Math.min(50, Math.round((d.parkCount / Math.max(maxCount, 1)) * 50));
+  const areaScore = Math.min(30, Math.round(Math.log10(d.totalArea + 1) * 8));
+  const avgScore = Math.min(20, Math.round(Math.log10(d.avgArea + 1) * 5));
+  return Math.min(99, Math.max(1, countScore + areaScore + avgScore));
+}
+
+function _gradeEmoji(score: number): string {
+  return score >= 70 ? '🟢' : score >= 50 ? '🟡' : '🔴';
+}
+
+function _gradeLabel(score: number): string {
+  return score >= 70 ? '우수' : score >= 50 ? '보통' : '취약';
+}
+
+function _areaDesc(ha: number): string {
+  if (ha >= 100) return `${ha.toFixed(0)}ha (여의도 공원의 약 ${(ha / 22.9).toFixed(1)}배)`;
+  if (ha >= 10) return `${ha.toFixed(1)}ha (축구장 약 ${(ha * 1.4).toFixed(0)}개 규모)`;
+  if (ha >= 1) return `${ha.toFixed(2)}ha`;
+  return `${(ha * 10000).toFixed(0)}㎡`;
+}
+
+function generateOfflineResponse(question: string): { answer: string; intent: string; confidence: number } {
+  const q = question.toLowerCase();
+  const maxCount = Math.max(...FALLBACK_DISTRICTS.map(d => d.parkCount));
+  const scored = [...FALLBACK_DISTRICTS]
+    .map(d => ({ ...d, score: _computeBaseScore(d, maxCount) }))
+    .sort((a, b) => b.score - a.score);
+
+  // 지역명 추출
+  const mentioned = FALLBACK_DISTRICTS.find(d => {
+    const name = d.district;
+    const short = name.replace(/(구|시|군)$/, '');
+    return q.includes(name) || (short.length >= 2 && q.includes(short));
+  });
+
+  // 의도 분류 (키워드 기반)
+  const isBest = /(최고|1위|가장 좋|제일 좋|우수|풍부|살기 좋|많은 곳|많은 지역)/.test(q);
+  const isWorst = /(취약|최악|부족|없는|적은|열악|나쁜|꼴찌|개선)/.test(q);
+  const isStats = /(전국|전체|통계|평균|현황|얼마나|몇 개|우리나라)/.test(q);
+  const isRank = /(순위|랭킹|top|상위|순서)/.test(q);
+  const isSimilar = /(비슷|유사|같은 수준)/.test(q);
+  const isRecommend = /(이사|추천|살기|거주|아이|산책)/.test(q);
+
+  // 1. 최고 지역
+  if (isBest && !mentioned) {
+    const best = scored[0];
+    const top3 = scored.slice(0, 3).map((d, i) =>
+      `  ${i + 1}위. **${d.district}** — 공원 ${d.parkCount.toLocaleString()}개, ${(d.totalArea / 10000).toFixed(0)}ha`
+    ).join('\n');
+    return {
+      answer: `🏆 전국 녹지 접근성 **1위 지역은 ${best.district}**입니다!\n\n📊 **${best.district} 상세 현황**\n• 공원 수: ${best.parkCount.toLocaleString()}개\n• 총 녹지 면적: ${_areaDesc(best.totalArea / 10000)}\n• 평균 공원 면적: ${(best.avgArea / 10000).toFixed(2)}ha\n• AI 예측 등급: ${_gradeEmoji(best.score)} **${_gradeLabel(best.score)}**\n\n🥇 **TOP 3 지역**\n${top3}\n\n💡 ※ 오프라인 모드 — 샘플 데이터 기반 분석입니다.`,
+      intent: 'best_district',
+      confidence: 0.85,
+    };
+  }
+
+  // 2. 취약 지역
+  if (isWorst && !mentioned) {
+    const worst = scored[scored.length - 1];
+    const bottom3 = scored.slice(-3).reverse().map((d, i) =>
+      `  ${i + 1}. **${d.district}** — 공원 ${d.parkCount.toLocaleString()}개, ${(d.totalArea / 10000).toFixed(1)}ha`
+    ).join('\n');
+    const vulnerableCount = scored.filter(d => d.score < 50).length;
+    return {
+      answer: `⚠️ 전국에서 녹지 접근성이 가장 취약한 지역은 **${worst.district}**입니다.\n\n📊 **${worst.district} 상세 현황**\n• 공원 수: ${worst.parkCount.toLocaleString()}개\n• 총 녹지 면적: ${_areaDesc(worst.totalArea / 10000)}\n• AI 예측 등급: ${_gradeEmoji(worst.score)} **${_gradeLabel(worst.score)}**\n\n🔴 **녹지 취약 하위 3개 지역**\n${bottom3}\n\n📌 샘플 ${scored.length}개 지역 중 **${vulnerableCount}개 지역**이 녹지 취약 상태(50점 미만)입니다.\n\n💡 ※ 오프라인 모드 — 샘플 데이터 기반 분석입니다.`,
+      intent: 'worst_district',
+      confidence: 0.85,
+    };
+  }
+
+  // 3. 전국 통계
+  if (isStats && !mentioned) {
+    const totalParks = FALLBACK_DISTRICTS.reduce((s, d) => s + d.parkCount, 0);
+    const totalArea = FALLBACK_DISTRICTS.reduce((s, d) => s + d.totalArea, 0);
+    const avgParks = (totalParks / FALLBACK_DISTRICTS.length).toFixed(1);
+    const vulnerable = scored.filter(d => d.score < 50).length;
+    const excellent = scored.filter(d => d.score >= 70).length;
+    return {
+      answer: `📊 **전국 녹지 현황 종합 분석** (샘플 데이터 기반)\n\n🌳 **공원 현황**\n• 총 공원 수: **${totalParks.toLocaleString()}개**\n• 총 녹지 면적: **${(totalArea / 10000).toFixed(0)}ha**\n• 지역당 평균 공원 수: ${avgParks}개\n\n🏙️ **지역 분포** (${scored.length}개 지역 분석)\n• 🟢 우수 지역 (70점 이상): ${excellent}개\n• 🟡 보통 지역 (50~69점): ${scored.length - vulnerable - excellent}개\n• 🔴 취약 지역 (50점 미만): ${vulnerable}개\n\n🏆 **공원 수 1위**: ${scored[0].district} (${scored[0].parkCount.toLocaleString()}개)\n⚠️ **녹지 최취약**: ${scored[scored.length - 1].district} (${scored[scored.length - 1].parkCount.toLocaleString()}개)\n\n💡 ※ 오프라인 모드 — 샘플 30개 지역 기반 분석입니다.`,
+      intent: 'stats_overview',
+      confidence: 0.82,
+    };
+  }
+
+  // 4. 순위
+  if (isRank && !mentioned) {
+    const top5 = [...FALLBACK_DISTRICTS].sort((a, b) => b.parkCount - a.parkCount).slice(0, 5);
+    const lines = top5.map((d, i) =>
+      `  ${i + 1}위. **${d.district}** — ${d.parkCount.toLocaleString()}개 공원 / ${_areaDesc(d.totalArea / 10000)}`
+    ).join('\n');
+    return {
+      answer: `🌳 **공원이 가장 많은 지역 TOP 5**\n\n${lines}\n\n💡 ※ 오프라인 모드 — 샘플 데이터 기반 순위입니다.`,
+      intent: 'top_parks',
+      confidence: 0.80,
+    };
+  }
+
+  // 5. 이사 추천
+  if (isRecommend && !mentioned) {
+    const top5 = [...FALLBACK_DISTRICTS].sort((a, b) => b.parkCount - a.parkCount).slice(0, 5);
+    const lines = top5.map((d, i) =>
+      `  ${i + 1}. **${d.district}** — 공원 ${d.parkCount.toLocaleString()}개 · ${(d.totalArea / 10000).toFixed(0)}ha`
+    ).join('\n');
+    return {
+      answer: `🏡 **녹지 환경 기준 거주 추천 지역 TOP 5**\n\n${lines}\n\n💡 공원 수가 많을수록 일상적인 녹지 접근성이 높습니다.\n특정 지역 상세 정보는 "강남구 현황 알려줘"처럼 질문해보세요!\n\n※ 오프라인 모드 — 샘플 데이터 기반 추천입니다.`,
+      intent: 'recommendation',
+      confidence: 0.78,
+    };
+  }
+
+  // 6. 유사 지역
+  if (isSimilar && mentioned) {
+    const target = { ...mentioned, score: _computeBaseScore(mentioned, maxCount) };
+    const similar = FALLBACK_DISTRICTS
+      .filter(d => d.district !== mentioned.district)
+      .map(d => ({
+        ...d,
+        score: _computeBaseScore(d, maxCount),
+        diff: Math.abs(d.parkCount - mentioned.parkCount) + Math.abs(d.totalArea - mentioned.totalArea) / 100000,
+      }))
+      .sort((a, b) => a.diff - b.diff)
+      .slice(0, 3);
+    const lines = similar.map((d, i) =>
+      `  ${i + 1}. **${d.district}** — 공원 ${d.parkCount.toLocaleString()}개 · ${(d.totalArea / 10000).toFixed(1)}ha`
+    ).join('\n');
+    return {
+      answer: `🔍 **${mentioned.district}**와 녹지 환경이 유사한 지역\n\n📌 기준: 공원 ${mentioned.parkCount.toLocaleString()}개 · ${(mentioned.totalArea / 10000).toFixed(1)}ha · ${_gradeEmoji(target.score)} ${_gradeLabel(target.score)}\n\n🗺️ **유사 지역 TOP 3**\n${lines}\n\n💡 ※ 오프라인 모드 — 샘플 데이터 기반 분석입니다.`,
+      intent: 'similar_district',
+      confidence: 0.78,
+    };
+  }
+
+  // 7. 특정 지역 상세
+  if (mentioned) {
+    const score = _computeBaseScore(mentioned, maxCount);
+    return {
+      answer: `📍 **${mentioned.district} 녹지 현황 분석**\n\n🌳 **공원 현황**\n• 공원 수: ${mentioned.parkCount.toLocaleString()}개\n• 총 녹지 면적: ${_areaDesc(mentioned.totalArea / 10000)}\n• 평균 공원 면적: ${(mentioned.avgArea / 10000).toFixed(2)}ha\n\n🤖 **AI 예측 결과**\n• 예측 등급: ${_gradeEmoji(score)} **${_gradeLabel(score)}** (기준 점수 ${score}점)\n\n💡 ${score >= 70 ? '현재 우수한 녹지 환경을 유지하고 있습니다.' : score >= 50 ? '평균적인 녹지 환경을 갖추고 있습니다.' : '녹지 공간 확충이 필요한 지역입니다.'}\n\n※ 오프라인 모드 — 샘플 데이터 기반 분석입니다.`,
+      intent: 'district_detail',
+      confidence: 0.80,
+    };
+  }
+
+  // 8. 폴백
+  return {
+    answer: '죄송합니다, 질문을 정확히 이해하지 못했습니다. 😅\n\n다음과 같이 질문해보세요:\n• "전국에서 녹지가 가장 좋은 곳은?"\n• "녹지 취약 지역은 어디야?"\n• "강남구 현황 알려줘"\n• "공원이 가장 많은 곳 순위"\n• "전국 평균 통계 알려줘"\n• "이사 가기 좋은 녹지 지역 추천"\n\n※ 현재 오프라인 모드로 동작 중입니다.',
+    intent: 'unknown',
+    confidence: 0.0,
+  };
+}
 
 // ─── 타입 ─────────────────────────────────────────────────────────────────────
 interface DistrictStat {
@@ -79,13 +266,14 @@ function estimateScore(stat: DistrictStat, maxCount: number, maxArea: number): n
   return Math.min(99, Math.max(1, countScore + areaScore + avgScore));
 }
 
-// ─── AI 챗봇 응답 (백엔드 ML API 호출) ──────────────────────────────────────
+// ─── AI 챗봇 응답 (백엔드 ML API → 오프라인 폴백) ───────────────────────────
 async function fetchMLResponse(question: string): Promise<{ answer: string; intent?: string; confidence?: number }> {
   try {
     const res = await fetch(`${API_BASE}/api/ai/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ question }),
+      signal: AbortSignal.timeout(5000),
     });
     if (!res.ok) throw new Error('API 오류');
     const data = await res.json();
@@ -95,9 +283,9 @@ async function fetchMLResponse(question: string): Promise<{ answer: string; inte
       confidence: data.confidence,
     };
   } catch {
-    return {
-      answer: '⚠️ 서버에 연결할 수 없습니다.\n\n백엔드 서버가 실행 중인지 확인해주세요:\n```\npython -m uvicorn backend.main:app --port 8000\n```',
-    };
+    // 백엔드 연결 실패 → 프론트엔드 내장 ML 폴백으로 자동 전환
+    const offline = generateOfflineResponse(question);
+    return offline;
   }
 }
 
@@ -118,6 +306,7 @@ export default function Dashboard() {
   ]);
   const [chatInput, setChatInput] = useState('');
   const [chatLoading, setChatLoading] = useState(false);
+  const [feedbackSent, setFeedbackSent] = useState<Record<string, 1 | 0>>({});
   const chatEndRef = useRef<HTMLDivElement>(null);
 
   // 서버 상태 확인
@@ -175,6 +364,39 @@ export default function Dashboard() {
   const totalParks = stats.reduce((s, d) => s + d.parkCount, 0);
   const totalArea = stats.reduce((s, d) => s + d.totalArea, 0);
   const vulnerableCount = stats.filter(d => (d.score ?? 0) < 50).length;
+
+  // ─── 피드백 전송 함수 ────────────────────────────────────────────────────────
+  const handleFeedback = async (msg: ChatMessage, rating: 1 | 0) => {
+    if (feedbackSent[msg.id] !== undefined) return; // 이미 피드백 보낸 메시지
+
+    // 이 AI 메시지 바로 앞의 user 메시지 찾기
+    const msgIndex = chatMessages.findIndex(m => m.id === msg.id);
+    const userMsg = msgIndex > 0 ? chatMessages[msgIndex - 1] : null;
+    const question = userMsg?.content ?? '';
+
+    // 낙관적 UI 업데이트 (즉시 반영)
+    setFeedbackSent(prev => ({ ...prev, [msg.id]: rating }));
+
+    // 서버 온라인일 때만 API 호출
+    if (serverOnline) {
+      try {
+        await fetch(`${API_BASE}/api/ai/feedback`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            question,
+            answer: msg.content,
+            intent: (msg as any).intent ?? 'unknown',
+            confidence: (msg as any).confidence ?? 0,
+            rating,
+          }),
+          signal: AbortSignal.timeout(3000),
+        });
+      } catch {
+        // 피드백 전송 실패해도 UI는 유지 (사용자 경험 우선)
+      }
+    }
+  };
 
   const handleSendChat = async (overrideQuestion?: string) => {
     const question = (overrideQuestion ?? chatInput).trim();
@@ -364,7 +586,7 @@ export default function Dashboard() {
               {/* AI에게 물어보기 버튼 */}
               <button
                 onClick={() => handleSendChat(`${selectedStat.district} 현황 알려줘`)}
-                disabled={chatLoading || !serverOnline}
+                disabled={chatLoading}
                 className="mt-3 w-full text-xs bg-purple-50 hover:bg-purple-100 text-purple-700 py-2 rounded-lg transition-colors disabled:opacity-50 flex items-center justify-center gap-1"
               >
                 <Brain className="w-3 h-3" />
@@ -479,12 +701,12 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* 서버 오프라인 경고 */}
+        {/* 서버 오프라인 안내 */}
         {serverOnline === false && (
-          <div className="mx-4 mt-3 bg-amber-50 border border-amber-200 rounded-lg px-4 py-2.5 flex items-center gap-2 text-sm text-amber-700">
-            <AlertTriangle className="w-4 h-4 flex-shrink-0" />
-            <span>백엔드 서버가 오프라인입니다. AI 응답이 제한될 수 있습니다.</span>
-            <button onClick={checkServerStatus} className="ml-auto text-xs underline hover:no-underline">재확인</button>
+          <div className="mx-4 mt-3 bg-blue-50 border border-blue-200 rounded-lg px-4 py-2.5 flex items-center gap-2 text-sm text-blue-700">
+            <Brain className="w-4 h-4 flex-shrink-0 text-blue-500" />
+            <span>백엔드 오프라인 — <strong>프론트엔드 내장 AI</strong>로 자동 전환되어 정상 동작합니다. 😊</span>
+            <button onClick={checkServerStatus} className="ml-auto text-xs underline hover:no-underline flex-shrink-0">재확인</button>
           </div>
         )}
 
@@ -501,13 +723,45 @@ export default function Dashboard() {
                 ) : (
                   <span>{msg.content}</span>
                 )}
-                {/* 신뢰도 표시 (AI 응답에만) */}
-                {msg.role === 'assistant' && (msg as any).confidence > 0 && (
-                  <div className="mt-2 pt-2 border-t border-gray-100 flex items-center gap-1.5">
-                    <Brain className="w-3 h-3 text-purple-400" />
-                    <span className="text-xs text-gray-400">
-                      의도: {(msg as any).intent} · 신뢰도 {Math.round((msg as any).confidence * 100)}%
-                    </span>
+                {/* 신뢰도 + 피드백 버튼 (AI 응답에만) */}
+                {msg.role === 'assistant' && msg.id !== '0' && (msg as any).confidence > 0 && (
+                  <div className="mt-2 pt-2 border-t border-gray-100">
+                    <div className="flex items-center gap-1.5">
+                      <Brain className="w-3 h-3 text-purple-400" />
+                      <span className="text-xs text-gray-400">
+                        의도: {(msg as any).intent} · 신뢰도 {Math.round((msg as any).confidence * 100)}%
+                      </span>
+                      {/* 👍👎 피드백 버튼 */}
+                      <div className="ml-auto flex items-center gap-1">
+                        {feedbackSent[msg.id] === undefined ? (
+                          <>
+                            <span className="text-xs text-gray-300 mr-0.5">도움됐나요?</span>
+                            <button
+                              onClick={() => handleFeedback(msg, 1)}
+                              className="p-1 rounded-md hover:bg-green-50 text-gray-300 hover:text-green-500 transition-colors"
+                              title="도움됐어요 — AI가 이 질문 패턴을 학습합니다"
+                            >
+                              <ThumbsUp className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              onClick={() => handleFeedback(msg, 0)}
+                              className="p-1 rounded-md hover:bg-red-50 text-gray-300 hover:text-red-400 transition-colors"
+                              title="별로예요 — 개선을 위해 기록됩니다"
+                            >
+                              <ThumbsDown className="w-3.5 h-3.5" />
+                            </button>
+                          </>
+                        ) : (
+                          <span className={`text-xs px-2 py-0.5 rounded-full ${
+                            feedbackSent[msg.id] === 1
+                              ? 'bg-green-50 text-green-600'
+                              : 'bg-red-50 text-red-500'
+                          }`}>
+                            {feedbackSent[msg.id] === 1 ? '👍 학습 반영됨' : '👎 기록됨'}
+                          </span>
+                        )}
+                      </div>
+                    </div>
                   </div>
                 )}
               </div>

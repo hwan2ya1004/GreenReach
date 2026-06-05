@@ -893,7 +893,76 @@ def generate_ml_response(question: str, districts: list[dict]) -> dict:
     }
 
 
-# ─── 9. 모델 초기화 (앱 시작 시 호출) ───────────────────────────────────────
+# ─── 9. 피드백 기반 학습 진화 ────────────────────────────────────────────────
+
+# 메모리 피드백 저장소 (DB 없는 환경용)
+_feedback_memory: list[dict] = []
+
+
+def add_feedback_to_corpus(question: str, intent: str, rating: int) -> dict:
+    """
+    사용자 피드백을 학습에 반영
+    - rating=1 (👍): 질문을 INTENT_CORPUS에 추가 → TF-IDF 즉시 재학습
+    - rating=0 (👎): 메모리에만 기록 (향후 관리자 검토용)
+    반환: {"status": "learned"|"logged"|"skipped", "corpus_size": int}
+    """
+    global _feedback_memory
+
+    # 메모리에 기록 (rating 무관)
+    _feedback_memory.append({
+        "question": question,
+        "intent": intent,
+        "rating": rating,
+    })
+
+    # 유효한 intent인지 확인
+    if intent not in INTENT_CORPUS:
+        return {"status": "skipped", "reason": f"알 수 없는 intent: {intent}", "corpus_size": 0}
+
+    if rating == 1:
+        # 👍 좋아요: 질문을 코퍼스에 추가하고 TF-IDF 재학습
+        # 중복 방지
+        if question not in INTENT_CORPUS[intent]:
+            INTENT_CORPUS[intent].append(question)
+            build_tfidf_model()  # 즉시 재학습
+            corpus_size = sum(len(v) for v in INTENT_CORPUS.values())
+            return {
+                "status": "learned",
+                "message": f"'{question[:30]}...' 질문이 '{intent}' 코퍼스에 추가되어 TF-IDF 재학습 완료",
+                "corpus_size": corpus_size,
+            }
+        else:
+            return {"status": "skipped", "reason": "이미 코퍼스에 존재하는 질문", "corpus_size": 0}
+    else:
+        # 👎 나빠요: 로그만 기록
+        return {
+            "status": "logged",
+            "message": "부정 피드백이 기록되었습니다. 관리자 검토 후 코퍼스를 수정할 수 있습니다.",
+            "corpus_size": 0,
+        }
+
+
+def get_feedback_stats() -> dict:
+    """피드백 통계 반환"""
+    total = len(_feedback_memory)
+    positive = sum(1 for f in _feedback_memory if f["rating"] == 1)
+    negative = sum(1 for f in _feedback_memory if f["rating"] == 0)
+    corpus_size = sum(len(v) for v in INTENT_CORPUS.values())
+
+    intent_counts: dict[str, int] = {}
+    for f in _feedback_memory:
+        intent_counts[f["intent"]] = intent_counts.get(f["intent"], 0) + 1
+
+    return {
+        "total_feedbacks": total,
+        "positive": positive,
+        "negative": negative,
+        "corpus_size": corpus_size,
+        "intent_distribution": intent_counts,
+    }
+
+
+# ─── 10. 모델 초기화 (앱 시작 시 호출) ──────────────────────────────────────
 
 def initialize_models(districts: list[dict]) -> dict:
     """앱 시작 시 모든 ML 모델 학습"""
