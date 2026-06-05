@@ -156,24 +156,63 @@ interface RankDistrict {
   avgArea: number;
 }
 
+interface ParkMarker {
+  id: string;
+  name: string;
+  type: string;
+  address: string;
+  lat: number;
+  lng: number;
+  area: number;
+}
+
 // ─── 공원 순위 섹션 컴포넌트 ─────────────────────────────────────────────────
 function ParkRankingSection({ adminKey }: { adminKey: string }) {
   const [selectedCity, setSelectedCity] = useState('');
+  const [selectedDistrict, setSelectedDistrict] = useState('');
+  const [districtList, setDistrictList] = useState<RankDistrict[]>([]);
   const [rankData, setRankData] = useState<RankDistrict[]>([]);
+  const [parkMarkers, setParkMarkers] = useState<ParkMarker[]>([]);
   const [rankLoading, setRankLoading] = useState(false);
-  const [rankMode, setRankMode] = useState<'national' | 'city'>('national');
+  const [rankMode, setRankMode] = useState<'national' | 'city' | 'district'>('national');
+  const [mapCenter, setMapCenter] = useState<[number, number]>([36.5, 127.5]);
+  const [mapZoom, setMapZoom] = useState(7);
+  const [selectedPark, setSelectedPark] = useState<ParkMarker | null>(null);
 
   const headers = { 'Content-Type': 'application/json', 'x-admin-key': adminKey };
 
-  const loadRanking = useCallback(async (city: string) => {
+  const loadRanking = useCallback(async (city: string, district: string) => {
     setRankLoading(true);
+    setParkMarkers([]);
+    setSelectedPark(null);
     try {
-      const params = city ? `?city=${encodeURIComponent(city)}` : '';
-      const res = await fetch(`${API_BASE}/api/admin/park-ranking${params}`, { headers });
+      const params = new URLSearchParams();
+      if (city) params.set('city', city);
+      if (district) params.set('district', district);
+      const qs = params.toString() ? `?${params.toString()}` : '';
+      const res = await fetch(`${API_BASE}/api/admin/park-ranking${qs}`, { headers });
       if (res.ok) {
         const data = await res.json();
         setRankData(data.districts || []);
         setRankMode(data.mode || 'national');
+        if (data.parks && data.parks.length > 0) {
+          setParkMarkers(data.parks);
+          const lats = data.parks.map((p: ParkMarker) => p.lat);
+          const lngs = data.parks.map((p: ParkMarker) => p.lng);
+          const centerLat = (Math.min(...lats) + Math.max(...lats)) / 2;
+          const centerLng = (Math.min(...lngs) + Math.max(...lngs)) / 2;
+          setMapCenter([centerLat, centerLng]);
+          setMapZoom(13);
+        } else if (city && !district) {
+          setMapZoom(9);
+        } else if (!city) {
+          setMapCenter([36.5, 127.5]);
+          setMapZoom(7);
+        }
+        // 구/군 목록 저장 (시 선택 시)
+        if (city && !district) {
+          setDistrictList(data.districts || []);
+        }
       }
     } catch {
       // 무시
@@ -183,16 +222,23 @@ function ParkRankingSection({ adminKey }: { adminKey: string }) {
   }, []);
 
   useEffect(() => {
-    loadRanking('');
+    loadRanking('', '');
   }, [loadRanking]);
 
   const handleCityChange = (city: string) => {
     setSelectedCity(city);
-    loadRanking(city);
+    setSelectedDistrict('');
+    setDistrictList([]);
+    loadRanking(city, '');
+  };
+
+  const handleDistrictChange = (district: string) => {
+    setSelectedDistrict(district);
+    loadRanking(selectedCity, district);
   };
 
   const top15 = rankData.slice(0, 15);
-  const maxCount = top15.length > 0 ? top15[0].parkCount : 1;
+  const maxCount = rankData.length > 0 ? rankData[0].parkCount : 1;
 
   const chartData = top15.map((d, i) => ({
     name: d.district,
@@ -200,19 +246,25 @@ function ParkRankingSection({ adminKey }: { adminKey: string }) {
     fill: i < 3 ? RANK_COLORS[i] : i < 5 ? RANK_COLORS[3] : RANK_COLORS[4],
   }));
 
+  const modeLabel =
+    rankMode === 'district' && selectedDistrict
+      ? `${selectedCity} ${selectedDistrict} 내 동별`
+      : rankMode === 'city' && selectedCity
+      ? `${selectedCity} 내 구/군별`
+      : '전국 시/도별';
+
   return (
     <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 mb-6">
       {/* 섹션 헤더 */}
-      <div className="flex flex-wrap items-center justify-between gap-3 mb-5">
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
         <h2 className="font-bold text-gray-800 flex items-center gap-2">
           <TreePine className="w-4 h-4 text-green-600" />
           공원 순위 분석
-          <span className="text-xs font-normal text-gray-400">
-            {rankMode === 'city' && selectedCity ? `— ${selectedCity} 내 구/군별` : '— 전국 시/도별'}
-          </span>
+          <span className="text-xs font-normal text-gray-400">— {modeLabel}</span>
         </h2>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <MapPin className="w-3.5 h-3.5 text-gray-400" />
+          {/* 시/도 선택 */}
           <select
             value={selectedCity}
             onChange={(e) => handleCityChange(e.target.value)}
@@ -223,14 +275,54 @@ function ParkRankingSection({ adminKey }: { adminKey: string }) {
               <option key={sido} value={sido}>{sido}</option>
             ))}
           </select>
+          {/* 구/군 선택 (시 선택 후 표시) */}
+          {selectedCity && districtList.length > 0 && (
+            <select
+              value={selectedDistrict}
+              onChange={(e) => handleDistrictChange(e.target.value)}
+              className="text-sm border border-gray-200 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-green-400 bg-white"
+            >
+              <option value="">🏙️ 구/군 선택 (동 단위)</option>
+              {districtList.map((d) => (
+                <option key={d.district} value={d.district}>{d.district}</option>
+              ))}
+            </select>
+          )}
           <button
-            onClick={() => loadRanking(selectedCity)}
+            onClick={() => loadRanking(selectedCity, selectedDistrict)}
             className="p-1.5 rounded-lg bg-gray-100 hover:bg-gray-200 transition-colors"
             title="새로고침"
           >
             <RefreshCw className="w-3.5 h-3.5 text-gray-500" />
           </button>
         </div>
+      </div>
+
+      {/* 브레드크럼 */}
+      <div className="flex items-center gap-1.5 text-xs text-gray-400 mb-4">
+        <button
+          onClick={() => { setSelectedCity(''); setSelectedDistrict(''); setDistrictList([]); loadRanking('', ''); }}
+          className={`hover:text-green-600 transition-colors ${!selectedCity ? 'text-green-600 font-semibold' : ''}`}
+        >
+          전국
+        </button>
+        {selectedCity && (
+          <>
+            <span>›</span>
+            <button
+              onClick={() => { setSelectedDistrict(''); loadRanking(selectedCity, ''); }}
+              className={`hover:text-green-600 transition-colors ${selectedCity && !selectedDistrict ? 'text-green-600 font-semibold' : ''}`}
+            >
+              {selectedCity}
+            </button>
+          </>
+        )}
+        {selectedDistrict && (
+          <>
+            <span>›</span>
+            <span className="text-green-600 font-semibold">{selectedDistrict}</span>
+          </>
+        )}
       </div>
 
       {rankLoading ? (
@@ -243,83 +335,192 @@ function ParkRankingSection({ adminKey }: { adminKey: string }) {
           데이터가 없습니다
         </div>
       ) : (
-        <div className="grid lg:grid-cols-2 gap-6">
-          {/* 바 차트 */}
-          <div>
-            <p className="text-xs text-gray-400 mb-3">상위 15개 지역 공원 수</p>
-            <ResponsiveContainer width="100%" height={320}>
-              <BarChart data={chartData} margin={{ top: 5, right: 10, left: -20, bottom: 70 }}>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                <XAxis
-                  dataKey="name"
-                  tick={{ fontSize: 10 }}
-                  angle={-40}
-                  textAnchor="end"
-                  interval={0}
-                />
-                <YAxis tick={{ fontSize: 11 }} />
-                <Tooltip formatter={(v) => [`${v}개`, '공원 수']} />
-                <Bar dataKey="parkCount" radius={[4, 4, 0, 0]}>
-                  {chartData.map((entry, i) => (
-                    <Cell key={i} fill={entry.fill} />
-                  ))}
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
+        <>
+          <div className="grid lg:grid-cols-2 gap-6 mb-6">
+            {/* 바 차트 */}
+            <div>
+              <p className="text-xs text-gray-400 mb-3">상위 15개 지역 공원 수</p>
+              <ResponsiveContainer width="100%" height={300}>
+                <BarChart data={chartData} margin={{ top: 5, right: 10, left: -20, bottom: 70 }}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} />
+                  <XAxis dataKey="name" tick={{ fontSize: 10 }} angle={-40} textAnchor="end" interval={0} />
+                  <YAxis tick={{ fontSize: 11 }} />
+                  <Tooltip formatter={(v) => [`${v}개`, '공원 수']} />
+                  <Bar
+                    dataKey="parkCount"
+                    radius={[4, 4, 0, 0]}
+                    onClick={(data) => {
+                      if (rankMode === 'city') handleDistrictChange(data.name);
+                    }}
+                    style={{ cursor: rankMode === 'city' ? 'pointer' : 'default' }}
+                  >
+                    {chartData.map((entry, i) => (
+                      <Cell key={i} fill={entry.fill} />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+              {rankMode === 'city' && (
+                <p className="text-xs text-gray-400 text-center mt-1">막대 클릭 시 동 단위로 드릴다운</p>
+              )}
+            </div>
 
-          {/* 순위 테이블 */}
-          <div>
-            <p className="text-xs text-gray-400 mb-3">전체 {rankData.length}개 지역 순위</p>
-            <div className="overflow-y-auto max-h-80 rounded-xl border border-gray-100">
-              <table className="w-full text-sm">
-                <thead className="sticky top-0 bg-gray-50">
-                  <tr>
-                    <th className="text-left px-3 py-2 text-xs font-semibold text-gray-500 w-8">순위</th>
-                    <th className="text-left px-3 py-2 text-xs font-semibold text-gray-500">지역</th>
-                    <th className="text-center px-3 py-2 text-xs font-semibold text-gray-500">공원 수</th>
-                    <th className="text-center px-3 py-2 text-xs font-semibold text-gray-500">총 면적</th>
-                    <th className="text-center px-3 py-2 text-xs font-semibold text-gray-500">비율</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {rankData.map((d, i) => (
-                    <tr
-                      key={d.district}
-                      className={i % 2 === 0 ? 'bg-white' : 'bg-gray-50/50'}
-                    >
-                      <td className="px-3 py-2 text-xs text-gray-400 font-medium">
-                        {i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}`}
-                      </td>
-                      <td className="px-3 py-2 text-sm font-medium text-gray-800">{d.district}</td>
-                      <td className="px-3 py-2 text-center text-sm font-bold text-green-700">
-                        {d.parkCount.toLocaleString()}개
-                      </td>
-                      <td className="px-3 py-2 text-center text-xs text-gray-500">
-                        {(d.totalArea / 10000).toFixed(1)}ha
-                      </td>
-                      <td className="px-3 py-2 text-center">
-                        <div className="flex items-center gap-1">
-                          <div className="flex-1 bg-gray-100 rounded-full h-1.5">
-                            <div
-                              className="bg-green-500 h-1.5 rounded-full"
-                              style={{ width: `${Math.round((d.parkCount / maxCount) * 100)}%` }}
-                            />
-                          </div>
-                          <span className="text-xs text-gray-400 w-8 text-right">
-                            {Math.round((d.parkCount / maxCount) * 100)}%
-                          </span>
-                        </div>
-                      </td>
+            {/* 순위 테이블 */}
+            <div>
+              <p className="text-xs text-gray-400 mb-3">전체 {rankData.length}개 지역 순위</p>
+              <div className="overflow-y-auto max-h-72 rounded-xl border border-gray-100">
+                <table className="w-full text-sm">
+                  <thead className="sticky top-0 bg-gray-50">
+                    <tr>
+                      <th className="text-left px-3 py-2 text-xs font-semibold text-gray-500 w-8">순위</th>
+                      <th className="text-left px-3 py-2 text-xs font-semibold text-gray-500">지역</th>
+                      <th className="text-center px-3 py-2 text-xs font-semibold text-gray-500">공원 수</th>
+                      <th className="text-center px-3 py-2 text-xs font-semibold text-gray-500">총 면적</th>
+                      <th className="text-center px-3 py-2 text-xs font-semibold text-gray-500">비율</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {rankData.map((d, i) => (
+                      <tr
+                        key={d.district}
+                        className={`${i % 2 === 0 ? 'bg-white' : 'bg-gray-50/50'} ${rankMode === 'city' ? 'cursor-pointer hover:bg-green-50' : ''}`}
+                        onClick={() => rankMode === 'city' && handleDistrictChange(d.district)}
+                      >
+                        <td className="px-3 py-2 text-xs text-gray-400 font-medium">
+                          {i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}`}
+                        </td>
+                        <td className="px-3 py-2 text-sm font-medium text-gray-800">{d.district}</td>
+                        <td className="px-3 py-2 text-center text-sm font-bold text-green-700">
+                          {d.parkCount.toLocaleString()}개
+                        </td>
+                        <td className="px-3 py-2 text-center text-xs text-gray-500">
+                          {(d.totalArea / 10000).toFixed(1)}ha
+                        </td>
+                        <td className="px-3 py-2 text-center">
+                          <div className="flex items-center gap-1">
+                            <div className="flex-1 bg-gray-100 rounded-full h-1.5">
+                              <div
+                                className="bg-green-500 h-1.5 rounded-full"
+                                style={{ width: `${Math.round((d.parkCount / maxCount) * 100)}%` }}
+                              />
+                            </div>
+                            <span className="text-xs text-gray-400 w-8 text-right">
+                              {Math.round((d.parkCount / maxCount) * 100)}%
+                            </span>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
           </div>
-        </div>
+
+          {/* 지도 (동 단위 선택 시 공원 마커 표시) */}
+          {rankMode === 'district' && parkMarkers.length > 0 && (
+            <div>
+              <p className="text-xs text-gray-400 mb-2 flex items-center gap-1">
+                <MapPin className="w-3 h-3" />
+                {selectedCity} {selectedDistrict} 공원 위치 ({parkMarkers.length}개)
+                {selectedPark && (
+                  <span className="ml-2 text-green-600 font-semibold">— {selectedPark.name} 선택됨</span>
+                )}
+              </p>
+              <div className="rounded-xl overflow-hidden border border-gray-200" style={{ height: 380 }}>
+                <ParkMap
+                  center={mapCenter}
+                  zoom={mapZoom}
+                  parks={parkMarkers}
+                  selectedPark={selectedPark}
+                  onSelectPark={setSelectedPark}
+                />
+              </div>
+              {selectedPark && (
+                <div className="mt-2 bg-green-50 border border-green-100 rounded-lg px-4 py-2.5 text-sm flex items-start gap-3">
+                  <TreePine className="w-4 h-4 text-green-600 flex-shrink-0 mt-0.5" />
+                  <div>
+                    <div className="font-semibold text-green-800">{selectedPark.name}</div>
+                    <div className="text-xs text-gray-500 mt-0.5">
+                      {selectedPark.type} · {selectedPark.area > 0 ? `${(selectedPark.area / 10000).toFixed(2)}ha` : '면적 미상'} · {selectedPark.address}
+                    </div>
+                  </div>
+                  <button onClick={() => setSelectedPark(null)} className="ml-auto text-xs text-gray-400 hover:text-gray-600">✕</button>
+                </div>
+              )}
+            </div>
+          )}
+        </>
       )}
     </div>
+  );
+}
+
+// ─── Leaflet 지도 컴포넌트 ────────────────────────────────────────────────────
+import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
+import L from 'leaflet';
+import 'leaflet/dist/leaflet.css';
+
+// Leaflet 기본 마커 아이콘 수정
+delete (L.Icon.Default.prototype as any)._getIconUrl;
+L.Icon.Default.mergeOptions({
+  iconRetinaUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png',
+  iconUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png',
+  shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
+});
+
+function createParkIcon(area: number) {
+  const size = area >= 50000 ? 28 : area >= 10000 ? 22 : 16;
+  const color = area >= 50000 ? '#15803d' : area >= 10000 ? '#16a34a' : '#4ade80';
+  return L.divIcon({
+    className: '',
+    html: `<div style="width:${size}px;height:${size}px;background:${color};border:2px solid white;border-radius:50%;box-shadow:0 1px 4px rgba(0,0,0,0.3);"></div>`,
+    iconSize: [size, size],
+    iconAnchor: [size / 2, size / 2],
+  });
+}
+
+function MapUpdater({ center, zoom }: { center: [number, number]; zoom: number }) {
+  const map = useMap();
+  useEffect(() => {
+    map.setView(center, zoom);
+  }, [center, zoom]);
+  return null;
+}
+
+function ParkMap({
+  center, zoom, parks, selectedPark, onSelectPark,
+}: {
+  center: [number, number];
+  zoom: number;
+  parks: ParkMarker[];
+  selectedPark: ParkMarker | null;
+  onSelectPark: (p: ParkMarker) => void;
+}) {
+  return (
+    <MapContainer center={center} zoom={zoom} style={{ height: '100%', width: '100%' }} scrollWheelZoom>
+      <TileLayer
+        attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+        url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+      />
+      <MapUpdater center={center} zoom={zoom} />
+      {parks.map((park) => (
+        <Marker
+          key={park.id}
+          position={[park.lat, park.lng]}
+          icon={createParkIcon(park.area)}
+          eventHandlers={{ click: () => onSelectPark(park) }}
+        >
+          <Popup>
+            <div className="text-xs">
+              <div className="font-bold text-green-700">{park.name}</div>
+              <div className="text-gray-500">{park.type}</div>
+              {park.area > 0 && <div>{(park.area / 10000).toFixed(2)}ha</div>}
+            </div>
+          </Popup>
+        </Marker>
+      ))}
+    </MapContainer>
   );
 }
 
