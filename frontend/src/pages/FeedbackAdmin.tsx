@@ -191,8 +191,6 @@ function ParkRankingSection({ adminKey }: { adminKey: string }) {
   const [mapZoom, setMapZoom] = useState(7);
   const [selectedPark, setSelectedPark] = useState<ParkMarker | null>(null);
 
-  const headers = { 'Content-Type': 'application/json', 'x-admin-key': adminKey };
-
   const loadRanking = async (city: string, district: string) => {
     setRankLoading(true);
     setParkMarkers([]);
