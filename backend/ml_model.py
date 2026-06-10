@@ -632,6 +632,17 @@ def generate_ml_response(question: str, districts: list[dict]) -> dict:
         except Exception:
             pass
 
+    # ── 커스텀 Q&A 우선 검색 (관리자가 직접 등록한 답변) ─────────────────────
+    custom_match = search_custom_qa(question)
+    if custom_match:
+        return {
+            "answer": custom_match["answer"],
+            "intent": custom_match["intent"],
+            "confidence": custom_match["similarity"],
+            "data": None,
+            "source": "custom_qa",
+        }
+
     # 의도 분류 (confidence 포함)
     intent, confidence = classify_intent(question)
 
@@ -897,6 +908,83 @@ def generate_ml_response(question: str, districts: list[dict]) -> dict:
 
 # 메모리 피드백 저장소 (DB 없는 환경용)
 _feedback_memory: list[dict] = []
+
+# ─── 커스텀 Q&A 저장소 ────────────────────────────────────────────────────────
+# 관리자가 직접 등록한 질문-답변 쌍 (TF-IDF 유사도로 검색)
+_custom_qa: list[dict] = []  # [{"question": str, "answer": str, "intent": str}, ...]
+_custom_qa_tfidf: TfidfVectorizer | None = None
+_custom_qa_matrix = None  # sparse matrix
+
+
+def add_custom_qa(question: str, answer: str, intent: str) -> dict:
+    """
+    관리자가 직접 작성한 Q&A를 저장소에 추가하고 TF-IDF 인덱스 재구축
+    반환: {"status": "added"|"updated", "total": int}
+    """
+    global _custom_qa, _custom_qa_tfidf, _custom_qa_matrix
+
+    # 동일 질문이 있으면 업데이트
+    for item in _custom_qa:
+        if item["question"] == question:
+            item["answer"] = answer
+            item["intent"] = intent
+            _rebuild_custom_qa_index()
+            return {"status": "updated", "total": len(_custom_qa)}
+
+    _custom_qa.append({"question": question, "answer": answer, "intent": intent})
+    _rebuild_custom_qa_index()
+    return {"status": "added", "total": len(_custom_qa)}
+
+
+def _rebuild_custom_qa_index() -> None:
+    """커스텀 Q&A TF-IDF 인덱스 재구축"""
+    global _custom_qa_tfidf, _custom_qa_matrix
+
+    if not _custom_qa:
+        _custom_qa_tfidf = None
+        _custom_qa_matrix = None
+        return
+
+    questions = [item["question"] for item in _custom_qa]
+    vec = TfidfVectorizer(
+        analyzer="char_wb",
+        ngram_range=(2, 4),
+        min_df=1,
+        sublinear_tf=True,
+    )
+    _custom_qa_matrix = vec.fit_transform(questions)
+    _custom_qa_tfidf = vec
+
+
+def search_custom_qa(question: str, threshold: float = 0.25) -> dict | None:
+    """
+    커스텀 Q&A에서 유사한 질문 검색
+    threshold 이상의 유사도가 있으면 해당 답변 반환, 없으면 None
+    """
+    global _custom_qa, _custom_qa_tfidf, _custom_qa_matrix
+
+    if not _custom_qa or _custom_qa_tfidf is None or _custom_qa_matrix is None:
+        return None
+
+    q_vec = _custom_qa_tfidf.transform([question])
+    sims = cosine_similarity(q_vec, _custom_qa_matrix)[0]
+    best_idx = int(np.argmax(sims))
+    best_score = float(sims[best_idx])
+
+    if best_score >= threshold:
+        item = _custom_qa[best_idx]
+        return {
+            "question": item["question"],
+            "answer": item["answer"],
+            "intent": item["intent"],
+            "similarity": round(best_score, 3),
+        }
+    return None
+
+
+def get_custom_qa_list() -> list[dict]:
+    """커스텀 Q&A 전체 목록 반환"""
+    return list(_custom_qa)
 
 
 def add_feedback_to_corpus(question: str, intent: str, rating: int) -> dict:

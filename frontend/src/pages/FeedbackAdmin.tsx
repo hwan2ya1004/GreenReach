@@ -644,6 +644,7 @@ function AdminDashboard({ onLogout }: { onLogout: () => void }) {
   const [addModal, setAddModal] = useState(false);
   const [addQuestion, setAddQuestion] = useState('');
   const [addIntent, setAddIntent] = useState('best_district');
+  const [addAnswer, setAddAnswer] = useState('');
   const [addLoading, setAddLoading] = useState(false);
   const [addMsg, setAddMsg] = useState('');
 
@@ -726,21 +727,25 @@ function AdminDashboard({ onLogout }: { onLogout: () => void }) {
     }
   };
 
-  // 코퍼스 수동 추가
+  // 코퍼스 수동 추가 (답변 있으면 커스텀 Q&A, 없으면 TF-IDF 코퍼스)
   const handleAddToCorpus = async () => {
     if (!addQuestion.trim()) return;
     setAddLoading(true);
     setAddMsg('');
     try {
+      const body: Record<string, string> = { question: addQuestion, intent: addIntent };
+      if (addAnswer.trim()) body.answer = addAnswer.trim();
+
       const res = await fetch(`${API_BASE}/api/admin/feedback/add-to-corpus`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ question: addQuestion, intent: addIntent }),
+        body: JSON.stringify(body),
       });
       if (res.ok) {
         const data = await res.json();
         setAddMsg(`✅ ${data.message}`);
         setAddQuestion('');
+        setAddAnswer('');
         loadStats();
       } else {
         setAddMsg('❌ 추가 실패');
@@ -1068,19 +1073,25 @@ function AdminDashboard({ onLogout }: { onLogout: () => void }) {
       {/* 코퍼스 추가 모달 */}
       {addModal && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 px-4">
-          <div className="bg-white rounded-2xl shadow-2xl p-6 w-full max-w-md">
-            <h3 className="font-bold text-gray-900 mb-4 flex items-center gap-2">
+          <div className="bg-white rounded-2xl shadow-2xl p-6 w-full max-w-lg">
+            <h3 className="font-bold text-gray-900 mb-1 flex items-center gap-2">
               <PlusCircle className="w-5 h-5 text-purple-600" />
-              학습 코퍼스에 문장 추가
+              AI 학습 데이터 추가
             </h3>
+            <p className="text-xs text-gray-400 mb-4">
+              답변을 입력하면 <span className="text-purple-600 font-semibold">커스텀 Q&A</span>로 저장되어 유사한 질문에 해당 답변이 우선 반환됩니다.
+              답변 없이 추가하면 의도 분류 학습(TF-IDF)에만 반영됩니다.
+            </p>
             <div className="space-y-3">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">질문 문장</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  질문 문장 <span className="text-red-500">*</span>
+                </label>
                 <input
                   type="text"
                   value={addQuestion}
                   onChange={(e) => setAddQuestion(e.target.value)}
-                  placeholder="예: 공원이 제일 많은 곳 어디야?"
+                  placeholder="예: 성남시에서 살기 좋은곳 추천해줘"
                   className="w-full border border-gray-300 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500"
                 />
               </div>
@@ -1096,6 +1107,24 @@ function AdminDashboard({ onLogout }: { onLogout: () => void }) {
                   ))}
                 </select>
               </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  AI 답변 직접 입력
+                  <span className="ml-1 text-xs text-gray-400 font-normal">(선택 — 입력 시 커스텀 Q&A로 저장)</span>
+                </label>
+                <textarea
+                  value={addAnswer}
+                  onChange={(e) => setAddAnswer(e.target.value)}
+                  placeholder={`예: 성남시는 분당구, 수정구, 중원구로 구성되어 있습니다.\n\n🌳 녹지 현황\n• 공원 수: 265개 (보통 수준)\n• 총 녹지 면적: 582ha\n\n분당구는 중앙공원, 율동공원 등 대형 공원이 많아 거주 환경이 우수합니다.`}
+                  rows={6}
+                  className="w-full border border-gray-300 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500 resize-none"
+                />
+                {addAnswer.trim() && (
+                  <p className="text-xs text-purple-600 mt-1 flex items-center gap-1">
+                    ✨ 커스텀 Q&A 모드: 이 답변이 유사한 질문에 우선 반환됩니다
+                  </p>
+                )}
+              </div>
               {addMsg && (
                 <div className={`text-sm rounded-lg px-3 py-2 ${
                   addMsg.startsWith('✅') ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-600'
@@ -1106,7 +1135,7 @@ function AdminDashboard({ onLogout }: { onLogout: () => void }) {
             </div>
             <div className="flex gap-2 mt-5">
               <button
-                onClick={() => { setAddModal(false); setAddMsg(''); setAddQuestion(''); }}
+                onClick={() => { setAddModal(false); setAddMsg(''); setAddQuestion(''); setAddAnswer(''); }}
                 className="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 font-semibold py-2.5 rounded-xl text-sm transition-colors"
               >
                 취소
@@ -1114,10 +1143,14 @@ function AdminDashboard({ onLogout }: { onLogout: () => void }) {
               <button
                 onClick={handleAddToCorpus}
                 disabled={!addQuestion.trim() || addLoading}
-                className="flex-1 bg-purple-600 hover:bg-purple-700 disabled:opacity-50 text-white font-semibold py-2.5 rounded-xl text-sm transition-colors flex items-center justify-center gap-2"
+                className={`flex-1 disabled:opacity-50 text-white font-semibold py-2.5 rounded-xl text-sm transition-colors flex items-center justify-center gap-2 ${
+                  addAnswer.trim()
+                    ? 'bg-green-600 hover:bg-green-700'
+                    : 'bg-purple-600 hover:bg-purple-700'
+                }`}
               >
                 {addLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <PlusCircle className="w-4 h-4" />}
-                {addLoading ? '추가 중...' : '추가 및 재학습'}
+                {addLoading ? '저장 중...' : addAnswer.trim() ? '커스텀 Q&A 저장' : '코퍼스 추가 및 재학습'}
               </button>
             </div>
           </div>

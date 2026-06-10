@@ -1060,6 +1060,7 @@ def admin_retrain(x_admin_key: Optional[str] = Header(None)):
 class AddToCorpusRequest(BaseModel):
     question: str
     intent: str
+    answer: Optional[str] = None  # 관리자가 직접 작성한 답변 (있으면 커스텀 Q&A로 저장)
 
 
 @app.post("/api/admin/feedback/add-to-corpus")
@@ -1067,10 +1068,29 @@ def admin_add_to_corpus(
     req: AddToCorpusRequest,
     x_admin_key: Optional[str] = Header(None),
 ):
-    """관리자 전용: 질문을 특정 의도 코퍼스에 수동 추가 후 재학습"""
+    """
+    관리자 전용: 질문을 학습에 추가
+    - answer가 있으면: 커스텀 Q&A 저장소에 추가 (AI가 해당 답변을 직접 반환)
+    - answer가 없으면: 기존 방식대로 TF-IDF 코퍼스에 추가 후 재학습
+    """
     if not _verify_admin(x_admin_key):
         raise HTTPException(status_code=403, detail="관리자 권한이 필요합니다.")
 
+    # 답변이 있으면 커스텀 Q&A로 저장
+    if req.answer and req.answer.strip():
+        qa_result = ml_model.add_custom_qa(
+            question=req.question,
+            answer=req.answer.strip(),
+            intent=req.intent,
+        )
+        return {
+            "status": "ok",
+            "mode": "custom_qa",
+            "message": f"'{req.question[:40]}' 질문에 대한 커스텀 답변이 등록되었습니다. 이제 유사한 질문에 이 답변이 우선 반환됩니다.",
+            "qa_result": qa_result,
+        }
+
+    # 답변 없으면 기존 TF-IDF 코퍼스 추가
     result = ml_model.add_feedback_to_corpus(
         question=req.question,
         intent=req.intent,
@@ -1078,9 +1098,40 @@ def admin_add_to_corpus(
     )
     return {
         "status": "ok",
+        "mode": "corpus",
         "message": f"'{req.question[:40]}' → '{req.intent}' 코퍼스 추가 완료",
         "learn_result": result,
     }
+
+
+@app.get("/api/admin/custom-qa/list")
+def admin_custom_qa_list(x_admin_key: Optional[str] = Header(None)):
+    """관리자 전용: 커스텀 Q&A 목록 조회"""
+    if not _verify_admin(x_admin_key):
+        raise HTTPException(status_code=403, detail="관리자 권한이 필요합니다.")
+
+    qa_list = ml_model.get_custom_qa_list()
+    return {
+        "total": len(qa_list),
+        "custom_qa": qa_list,
+    }
+
+
+@app.delete("/api/admin/custom-qa/delete")
+def admin_custom_qa_delete(
+    question: str = Query(..., description="삭제할 질문"),
+    x_admin_key: Optional[str] = Header(None),
+):
+    """관리자 전용: 커스텀 Q&A 삭제"""
+    if not _verify_admin(x_admin_key):
+        raise HTTPException(status_code=403, detail="관리자 권한이 필요합니다.")
+
+    original_len = len(ml_model._custom_qa)
+    ml_model._custom_qa = [item for item in ml_model._custom_qa if item["question"] != question]
+    if len(ml_model._custom_qa) < original_len:
+        ml_model._rebuild_custom_qa_index()
+        return {"status": "ok", "message": f"'{question[:40]}' 커스텀 Q&A가 삭제되었습니다."}
+    return {"status": "not_found", "message": "해당 질문을 찾을 수 없습니다."}
 
 
 def _parse_dong(address: str, city: str, district: str) -> str:
