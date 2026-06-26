@@ -17,7 +17,7 @@ if DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
 # Supabase 무료 플랜은 동시 연결 수가 제한적 (최대 ~20개)
-# pool_size=2, max_overflow=3 으로 낮게 설정
+# Session Pooler 사용 시 pool_size=2, max_overflow=3 으로 낮게 설정
 engine = create_engine(
     DATABASE_URL,
     pool_pre_ping=True,
@@ -25,8 +25,11 @@ engine = create_engine(
     max_overflow=3,
     connect_args={
         "connect_timeout": 10,
-        "sslmode": "require",   # Supabase는 SSL 필수
+        "sslmode": "require",       # Supabase는 SSL 필수
+        "options": "-c statement_timeout=30000",  # 30초 타임아웃
     },
+    # Session Pooler 사용 시 prepared statements 비활성화
+    execution_options={"no_parameters": False},
 )
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
