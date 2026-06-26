@@ -1,6 +1,6 @@
 """
 GreenReach Database 설정
-PostgreSQL + PostGIS 연동
+PostgreSQL + PostGIS 연동 (Supabase 호환)
 """
 import os
 from sqlalchemy import create_engine
@@ -12,15 +12,21 @@ DATABASE_URL = os.getenv(
     "postgresql://greenreach:greenreach@localhost:5432/greenreach"
 )
 
-# Render PostgreSQL은 postgres:// 로 시작하는 경우가 있어 수정
+# Render / Supabase 모두 postgres:// 로 시작하는 경우가 있어 수정
 if DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
+# Supabase 무료 플랜은 동시 연결 수가 제한적 (최대 ~20개)
+# pool_size=2, max_overflow=3 으로 낮게 설정
 engine = create_engine(
     DATABASE_URL,
     pool_pre_ping=True,
-    pool_size=5,
-    max_overflow=10,
+    pool_size=2,
+    max_overflow=3,
+    connect_args={
+        "connect_timeout": 10,
+        "sslmode": "require",   # Supabase는 SSL 필수
+    },
 )
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
