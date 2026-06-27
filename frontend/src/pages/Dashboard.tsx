@@ -300,7 +300,7 @@ export default function Dashboard() {
     {
       id: '0',
       role: 'assistant',
-      content: '안녕하세요! 그린리치 AI 어시스턴트입니다. 전국 녹지 접근성에 대해 무엇이든 물어보세요.\n\n예: "전국에서 녹지가 가장 좋은 곳은?" 또는 "강남구 현황 알려줘"\n\n🤖 scikit-learn ML 모델 (RandomForest + KNN + TF-IDF) 기반으로 분석합니다.',
+      content: '안녕하세요! 그린리치 AI 녹지 어시스턴트입니다. 전국 녹지 접근성에 대해 무엇이든 물어보세요.\n\n예: "전국에서 녹지가 가장 좋은 곳은?" 또는 "강남구 현황 알려줘"\n\n🤖 RandomForest + KNN + TF-IDF 기반 모델 구조로 동작합니다.\n⚠️ 현재 UI·모델 구조 설계 완료 단계이며, 실제 응답은 데모 수준입니다. 향후 사용자 데이터 축적 후 고도화 예정입니다.',
       timestamp: new Date(),
     },
   ]);

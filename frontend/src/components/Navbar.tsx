@@ -6,7 +6,7 @@ const navLinks = [
   { to: '/', label: '홈' },
   { to: '/map', label: '내 동네 분석' },
   { to: '/compare', label: '동네 비교' },
-  { to: '/dashboard', label: '지자체 대시보드' },
+  { to: '/dashboard', label: '시군구 대시보드' },
 ];
 
 export default function Navbar() {
