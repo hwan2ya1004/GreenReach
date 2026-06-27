@@ -155,19 +155,19 @@ export default function Landing() {
               녹지 불평등, 데이터로 드러납니다
             </h2>
             <p className="text-lg text-gray-600 max-w-2xl mx-auto">
-              그린피스 2026년 6월 발표 자료 기준 — 서울 시민의 녹지 접근 현실
+            그린피스 2026년 6월 발표 자료 기준 — 전국 시민의 녹지 접근 현실
             </p>
           </div>
           <div className="grid md:grid-cols-3 gap-6">
             <div className="bg-red-50 border border-red-100 rounded-xl p-6">
               <div className="text-4xl font-bold text-red-600 mb-2">24만 5천명</div>
               <div className="font-semibold text-gray-800 mb-2">WHO 권고 기준 300m 내 녹지 미접근</div>
-              <div className="text-sm text-gray-600">서울 시민 중 WHO 권고 기준(300m) 내에서 녹지를 누리지 못하는 인구입니다.</div>
+              <div className="text-sm text-gray-600">전국 시민 중 WHO 권고 기준(300m) 내에서 녹지를 누리지 못하는 인구입니다.</div>
             </div>
             <div className="bg-orange-50 border border-orange-100 rounded-xl p-6">
               <div className="text-4xl font-bold text-orange-600 mb-2">420만명</div>
               <div className="font-semibold text-gray-800 mb-2">100m 기준으로 좁히면</div>
-              <div className="text-sm text-gray-600">기준을 100m로 좁히면 서울 시민 420만 명이 녹지 접근 취약 상태에 놓입니다.</div>
+              <div className="text-sm text-gray-600">기준을 100m로 좁히면 전국 시민 420만 명이 녹지 접근 취약 상태에 놓입니다.</div>
             </div>
             <div className="bg-blue-50 border border-blue-100 rounded-xl p-6">
               <div className="text-4xl font-bold text-blue-600 mb-2">0개</div>
@@ -414,7 +414,7 @@ export default function Landing() {
             </div>
             <div className="text-sm text-center">
               위치정보 기반 도시 녹지 접근성 시민 플랫폼<br />
-              공공데이터포털 · VWorld · OpenStreetMap 데이터 활용
+              공공데이터포털 · OpenStreetMap 데이터 활용
             </div>
             <div className="text-sm flex flex-col items-end gap-1">
               <span>© 2026 GreenReach</span>

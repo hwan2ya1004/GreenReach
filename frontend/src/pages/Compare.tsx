@@ -4,7 +4,6 @@ import L from 'leaflet';
 import { ArrowLeftRight, TrendingUp, TrendingDown, Minus, MapPin, Loader2, Navigation, RotateCcw, Search } from 'lucide-react';
 import { getScoreColor } from '../utils/accessibility';
 
-const VWORLD_KEY = '4B826FAE-56F2-32CB-829B-2CD7F7DFF7E7';
 const API_BASE = import.meta.env.VITE_API_BASE
   || (typeof window !== 'undefined' && window.location.hostname !== 'localhost'
     ? 'https://greenreach-api.onrender.com'
@@ -362,8 +361,8 @@ export default function Compare() {
                 style={{ width: '100%', height: '100%', cursor: selectMode ? 'crosshair' : 'grab' }}
               >
                 <TileLayer
-                  attribution='&copy; VWorld'
-                  url={`https://api.vworld.kr/req/wmts/1.0.0/${VWORLD_KEY}/Base/{z}/{y}/{x}.png`}
+                  attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+                  url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
                   maxZoom={19}
                 />
                 <MapClickHandler onMapClick={handleMapClick} enabled={!!selectMode} />

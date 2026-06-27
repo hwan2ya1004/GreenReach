@@ -15,37 +15,37 @@ const DEMO_ADDRESSES = [
     totalArea: 124500,
   },
   {
-    address: '서울 노원구 상계동 1045',
-    lat: 37.6558,
-    lng: 127.0633,
-    score: 71,
+    address: '부산 해운대구 우동 1480',
+    lat: 35.1631,
+    lng: 129.1639,
+    score: 74,
     grade: 'B',
-    nearestPark: '당현천근린공원',
-    walkMin: 7,
-    parkCount: 5,
-    totalArea: 89200,
+    nearestPark: '해운대해수욕장공원',
+    walkMin: 6,
+    parkCount: 6,
+    totalArea: 98700,
   },
   {
-    address: '서울 금천구 독산동 291',
-    lat: 37.4563,
-    lng: 126.9018,
+    address: '경기 수원시 팔달구 인계동 1119',
+    lat: 37.2636,
+    lng: 127.0286,
+    score: 55,
+    grade: 'C',
+    nearestPark: '인계근린공원',
+    walkMin: 12,
+    parkCount: 3,
+    totalArea: 52000,
+  },
+  {
+    address: '제주특별자치도 제주시 연동 2777',
+    lat: 33.4996,
+    lng: 126.5312,
     score: 38,
     grade: 'F',
-    nearestPark: '독산근린공원',
-    walkMin: 18,
+    nearestPark: '연동근린공원',
+    walkMin: 19,
     parkCount: 2,
-    totalArea: 31000,
-  },
-  {
-    address: '서울 마포구 합정동 366',
-    lat: 37.5497,
-    lng: 126.9143,
-    score: 65,
-    grade: 'C',
-    nearestPark: '합정근린공원',
-    walkMin: 11,
-    parkCount: 4,
-    totalArea: 67800,
+    totalArea: 28500,
   },
 ];
 
@@ -327,14 +327,14 @@ Authorization: Bearer YOUR_API_KEY`;
           <MapPin className="w-5 h-5 text-green-600" />
           직접 주소로 테스트해보기
         </h2>
-        <p className="text-sm text-gray-500 mb-4">서울 주소를 입력하면 녹지 접근성 점수를 즉시 확인할 수 있습니다 (데모)</p>
+        <p className="text-sm text-gray-500 mb-4">전국 주소를 입력하면 녹지 접근성 점수를 즉시 확인할 수 있습니다 (데모)</p>
         <div className="flex gap-3">
           <input
             type="text"
             value={inputAddress}
             onChange={(e) => setInputAddress(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && handleDemoSearch()}
-            placeholder="예: 강남구 역삼동, 노원구 상계동..."
+            placeholder="예: 강남구 역삼동, 해운대구 우동, 제주시 연동..."
             className="flex-1 border border-gray-300 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-green-500 bg-white"
           />
           <button

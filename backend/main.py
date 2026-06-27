@@ -36,7 +36,7 @@ def _get_district_list() -> list[dict]:
     if _ml_districts_cache:
         return _ml_districts_cache
 
-    parks = load_csv_fallback()
+    parks = load_fallback()
     stats: dict = {}
     ADMIN_SUFFIXES = ("광역시", "특별시", "특별자치시", "특별자치도")
     for p in parks:
@@ -156,8 +156,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ─── CSV 폴백 (DB 없을 때) ────────────────────────────────────────────────────
+# ─── 공공데이터 API 폴백 (DB 없을 때) ────────────────────────────────────────
 
+PUBLIC_DATA_API_KEY = os.environ.get(
+    "PUBLIC_DATA_API_KEY",
+    "eeac02d09655cb4bddff67df993513c86a22d15b34234fc45fe1910947547c23"  # 공공데이터포털 발급 키
+)
+PUBLIC_DATA_API_ENDPOINT = "https://api.data.go.kr/openapi/tn_pubr_public_cty_park_info_api"
+
+# CSV 경로 (API 키 없을 때 최후 폴백)
 CSV_PATH = os.path.join(os.path.dirname(__file__), "..", "전국도시공원정보표준데이터.csv")
 
 PARK_TYPE_MAP = {
@@ -167,6 +174,7 @@ PARK_TYPE_MAP = {
     "방재공원": "방재공원", "광역공원": "광역공원", "주제공원": "주제공원",
 }
 
+_api_cache: list[dict] | None = None
 _csv_cache: list[dict] | None = None
 
 
@@ -265,6 +273,126 @@ def load_csv_fallback() -> list[dict]:
         pass
     _csv_cache = parks
     return parks
+
+
+def _api_item_to_park(item: dict, idx: int) -> dict | None:
+    """공공데이터 API 응답 item → 내부 park dict 변환"""
+    try:
+        lat = float((item.get("latitude") or "").strip())
+        lng = float((item.get("longitude") or "").strip())
+        if not (33.0 <= lat <= 38.9 and 124.0 <= lng <= 132.0):
+            return None
+        name = (item.get("parkNm") or "").strip()
+        if not name:
+            return None
+        address = (item.get("rdnmadr") or item.get("lnmadr") or "").strip()
+        park_type_raw = (item.get("parkSe") or "").strip()
+        park_type = PARK_TYPE_MAP.get(park_type_raw, park_type_raw or "기타")
+        area_str = (item.get("parkAr") or "0").strip()
+        try:
+            area = float(area_str) if area_str else 0.0
+        except ValueError:
+            area = 0.0
+        fac_keys = ["mvmFclty", "amsmtFclty", "cnvnncFclty", "cltrFclty", "etcFclty"]
+        facilities = []
+        for key in fac_keys:
+            val = (item.get(key) or "").strip()
+            if val:
+                facilities.extend([v.strip() for v in val.replace("/", ",").split(",") if v.strip()][:3])
+        facilities = facilities[:6]
+        fac_str = " ".join(facilities)
+        return {
+            "id": (item.get("manageNo") or f"park_{idx}").strip(),
+            "name": name, "type": park_type,
+            "district": parse_district(address),
+            "address": address, "lat": lat, "lng": lng, "area": area,
+            "facilities": facilities,
+            "childFriendly": park_type == "어린이공원" or "놀이" in fac_str or "유희" in fac_str,
+            "petFriendly": "반려" in fac_str or park_type in ["근린공원", "수변공원"],
+            "accessible": "장애" in fac_str or area >= 10000,
+            "manager": (item.get("institutionNm") or "").strip(),
+            "phone": (item.get("phoneNumber") or "").strip(),
+            "dataDate": (item.get("referenceDate") or "").strip(),
+        }
+    except (ValueError, KeyError, TypeError, AttributeError):
+        return None
+
+
+def load_api_fallback() -> list[dict]:
+    """
+    공공데이터 API 폴백 (DB 없을 때 API 직접 호출)
+    - PUBLIC_DATA_API_KEY 환경변수 또는 기본값 사용
+    - 전체 데이터를 페이지네이션으로 수집 후 캐시
+    """
+    global _api_cache
+    if _api_cache is not None:
+        return _api_cache
+
+    import time as _time
+    try:
+        import requests as _requests
+    except ImportError:
+        print("[GreenReach] requests 패키지 없음 → CSV 폴백으로 전환")
+        return load_csv_fallback()
+
+    print("[GreenReach] 공공데이터 API 폴백 수집 시작...")
+    all_items: list[dict] = []
+    page = 1
+    num_of_rows = 1000
+
+    while True:
+        try:
+            resp = _requests.get(
+                PUBLIC_DATA_API_ENDPOINT,
+                params={
+                    "serviceKey": PUBLIC_DATA_API_KEY,
+                    "pageNo": page,
+                    "numOfRows": num_of_rows,
+                    "type": "json",
+                },
+                timeout=30,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            body = data.get("response", {}).get("body", {})
+            total_count = int(body.get("totalCount", 0))
+            items = body.get("items", []) or []
+            if isinstance(items, dict):
+                items = [items]
+
+            all_items.extend(items)
+            print(f"  API 수집: {len(all_items):,}/{total_count:,} ({page}페이지)")
+
+            if len(all_items) >= total_count or not items:
+                break
+            page += 1
+            _time.sleep(0.3)
+
+        except Exception as e:
+            print(f"[GreenReach] API 폴백 오류 (page {page}): {e} → CSV 폴백으로 전환")
+            return load_csv_fallback()
+
+    parks = []
+    for i, item in enumerate(all_items):
+        park = _api_item_to_park(item, i)
+        if park:
+            parks.append(park)
+
+    print(f"[GreenReach] API 폴백 완료: {len(parks):,}개 공원")
+    _api_cache = parks
+    return parks
+
+
+def load_fallback() -> list[dict]:
+    """
+    폴백 데이터 로드 우선순위:
+    1. 공공데이터 API (PUBLIC_DATA_API_KEY 있을 때)
+    2. CSV 파일 (전국도시공원정보표준데이터.csv 있을 때)
+    3. 빈 리스트
+    """
+    if PUBLIC_DATA_API_KEY:
+        return load_api_fallback()
+    return load_csv_fallback()
 
 
 # ─── 유틸리티 ────────────────────────────────────────────────────────────────
@@ -432,8 +560,8 @@ def get_nearby_parks(
         except Exception as e:
             print(f"[DB 오류] nearby: {e}")
 
-    # CSV 폴백
-    all_parks = load_csv_fallback()
+    # 폴백 (공공데이터 API → CSV 순)
+    all_parks = load_fallback()
     nearby = []
     for park in all_parks:
         dist = haversine(lat, lng, park["lat"], park["lng"])
@@ -501,8 +629,8 @@ def get_accessibility(
         except Exception as e:
             print(f"[DB 오류] accessibility: {e}")
 
-    # CSV 폴백
-    all_parks = load_csv_fallback()
+    # 폴백 (공공데이터 API → CSV 순)
+    all_parks = load_fallback()
     if not all_parks:
         return {"error": "공원 데이터 없음", "score": 0, "grade": "F"}
     distances = sorted([(haversine(lat, lng, p["lat"], p["lng"]), p) for p in all_parks], key=lambda x: x[0])
@@ -510,8 +638,8 @@ def get_accessibility(
     count_500 = sum(1 for d, _ in distances if d <= 500)
     count_1km = sum(1 for d, _ in distances if d <= 1000)
     result = calc_score_from_parks(nearest_dist, nearest_park, count_500, count_1km)
-    result["data_source"] = "공공데이터포털 전국도시공원정보표준데이터 (CSV)"
-    result["db"] = "csv_fallback"
+    result["data_source"] = "공공데이터포털 전국도시공원정보표준데이터 (API 폴백)"
+    result["db"] = "api_fallback"
     return result
 
 
@@ -554,12 +682,12 @@ def get_parks(
         except Exception as e:
             print(f"[DB 오류] parks: {e}")
 
-    parks = load_csv_fallback()
+    parks = load_fallback()
     if district:
         parks = [p for p in parks if p["district"] == district]
     if park_type:
         parks = [p for p in parks if p["type"] == park_type]
-    return {"total": len(parks[:limit]), "db": "csv_fallback",
+    return {"total": len(parks[:limit]), "db": "api_fallback",
             "data_source": "공공데이터포털 전국도시공원정보표준데이터", "parks": parks[:limit]}
 
 
@@ -595,7 +723,7 @@ def get_district_stats(db: Session = Depends(get_db)):
         except Exception as e:
             print(f"[DB 오류] districts: {e}")
 
-    parks = load_csv_fallback()
+    parks = load_fallback()
     stats: dict = {}
     for p in parks:
         d = p["district"]
@@ -637,11 +765,11 @@ def get_park_types(db: Session = Depends(get_db)):
         except Exception as e:
             print(f"[DB 오류] park-types: {e}")
 
-    parks = load_csv_fallback()
+    parks = load_fallback()
     types: dict = {}
     for p in parks:
         types[p["type"]] = types.get(p["type"], 0) + 1
-    return {"db": "csv_fallback", "types": sorted(types.items(), key=lambda x: x[1], reverse=True)}
+    return {"db": "api_fallback", "types": sorted(types.items(), key=lambda x: x[1], reverse=True)}
 
 
 @app.get("/api/route")
@@ -727,8 +855,8 @@ def get_accessibility_osm(
             print(f"[DB 오류] accessibility/osm: {e}")
 
     if nearest_park is None:
-        # CSV 폴백
-        all_parks = load_csv_fallback()
+        # 폴백 (공공데이터 API → CSV 순)
+        all_parks = load_fallback()
         if not all_parks:
             return {"error": "공원 데이터 없음", "score": 0, "grade": "F"}
         distances = sorted(
@@ -1313,8 +1441,8 @@ def admin_park_ranking(
         except Exception as e:
             print(f"[Admin] park-ranking DB 오류: {e}")
 
-    # ── CSV 폴백 ──────────────────────────────────────────────────────────────
-    all_parks = load_csv_fallback()
+    # ── 폴백 (공공데이터 API → CSV 순) ───────────────────────────────────────
+    all_parks = load_fallback()
 
     if city and district:
         # 동 단위

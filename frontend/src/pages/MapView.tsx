@@ -5,9 +5,6 @@ import { MapPin, Navigation, Filter, TreePine, Clock, Star, Share2, Copy, Check,
 import { getScoreColor, getGradeDescription } from '../utils/accessibility';
 import type { RecommendationFilter } from '../types';
 
-// ─── VWorld API 키 ────────────────────────────────────────────────────────────
-const VWORLD_KEY = '4B826FAE-56F2-32CB-829B-2CD7F7DFF7E7';
-
 // ─── 백엔드 API URL
 const API_BASE = import.meta.env.VITE_API_BASE
   || (typeof window !== 'undefined' && window.location.hostname !== 'localhost'
@@ -168,10 +165,9 @@ const MapComponent = memo(({
     style={{ width: '100%', height: '100%', cursor: 'grab' }}
   >
     <TileLayer
-      attribution='&copy; <a href="https://www.vworld.kr" target="_blank">VWorld</a>'
-      url={`https://api.vworld.kr/req/wmts/1.0.0/${VWORLD_KEY}/Base/{z}/{y}/{x}.png`}
+      attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+      url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
       maxZoom={19}
-      tileSize={256}
     />
     <MapCenter lat={userLat} lng={userLng} />
     <MapClickHandler onMapClick={onMapClick} enabled={false} />
@@ -828,7 +824,7 @@ export default function MapView() {
         <div className="mt-4 pt-3 border-t border-gray-100 text-xs text-gray-400 space-y-0.5">
           <p className="font-medium text-gray-500">📊 데이터 출처</p>
           <p>· 공원: 공공데이터포털 (data.go.kr)</p>
-          <p>· 지도: VWorld (LX한국국토정보공사)</p>
+          <p>· 지도: OpenStreetMap contributors</p>
           <p>· 경로: OSRM (project-osrm.org)</p>
         </div>
       </div>
