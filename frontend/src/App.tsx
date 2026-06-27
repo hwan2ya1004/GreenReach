@@ -5,6 +5,7 @@ import Dashboard from './pages/Dashboard';
 import Compare from './pages/Compare';
 import FeedbackAdmin from './pages/FeedbackAdmin';
 import Navbar from './components/Navbar';
+import ChatBot from './components/ChatBot';
 
 function App() {
   return (
@@ -19,6 +20,8 @@ function App() {
           {/* 관리자 전용 - Navbar에 노출 안 함 */}
           <Route path="/feedback" element={<FeedbackAdmin />} />
         </Routes>
+        {/* 전역 플로팅 AI 챗봇 - 모든 페이지에서 오른쪽 하단에 표시 */}
+        <ChatBot />
       </div>
     </BrowserRouter>
   );

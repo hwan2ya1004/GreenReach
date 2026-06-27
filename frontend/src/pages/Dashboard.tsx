@@ -61,16 +61,29 @@ const PRICING_PLANS = [
   {
     name: '스타터',
     price: '월 29만원',
-    unit: '월 10,000 API 호출',
-    features: ['녹지 접근성 점수 API', '도보 거리 분석', '기술 문서 제공', '이메일 지원'],
+    unit: '월 10,000 API 호출 (하루 약 330개 매물)',
+    target: '소규모 부동산 앱 · 스타트업에 적합',
+    features: [
+      '주소를 입력하면 녹지 점수(0~100점)를 즉시 반환하는 API',
+      '가장 가까운 공원까지 실제 도보 몇 분인지 계산',
+      'API 연동 방법을 단계별로 설명한 개발자 가이드 제공',
+      '연동 중 문제 발생 시 이메일로 기술 지원',
+    ],
     highlight: false,
     cta: '무료 체험 신청',
   },
   {
     name: '비즈니스',
     price: '월 99만원',
-    unit: '월 100,000 API 호출',
-    features: ['스타터 전체 포함', '실시간 공원 데이터 연동', '위젯 커스터마이징', '전담 기술 지원', 'SLA 99.9% 보장'],
+    unit: '월 100,000 API 호출 (하루 약 3,300개 매물)',
+    target: '직방·다방 규모의 중대형 플랫폼에 적합',
+    features: [
+      '스타터 플랜 전체 포함',
+      '공공데이터포털 최신 공원 정보를 실시간으로 반영',
+      '매물 페이지에 삽입되는 녹지 점수 카드의 색상·크기를 플랫폼 디자인에 맞게 변경 가능',
+      '담당 개발자가 직접 연동을 도와주는 1:1 기술 지원',
+      '서비스 가용성 99.9% 보장 (SLA 계약)',
+    ],
     highlight: true,
     cta: '파일럿 제휴 신청',
   },
@@ -78,7 +91,14 @@ const PRICING_PLANS = [
     name: '엔터프라이즈',
     price: '별도 협의',
     unit: '무제한 API 호출',
-    features: ['비즈니스 전체 포함', '전용 서버 구축', '화이트라벨 제공', '전국 데이터 독점 계약', '전담 PM 배정'],
+    target: '대형 건설사 · 포털 · 금융사에 적합',
+    features: [
+      '비즈니스 플랜 전체 포함',
+      '자사 서버에 직접 설치하는 전용 인프라 구축',
+      'GreenReach 로고 없이 자사 브랜드 이름으로 서비스 제공 (예: "직방 녹지 지수"로 표시)',
+      '경쟁사에는 제공하지 않는 전국 데이터 독점 공급 계약',
+      '프로젝트 매니저가 도입 전 과정을 전담 관리',
+    ],
     highlight: false,
     cta: '영업팀 문의',
   },
@@ -419,6 +439,9 @@ Authorization: Bearer YOUR_API_KEY`;
                   {plan.price}
                 </div>
                 <div className="text-xs text-gray-500 mt-0.5">{plan.unit}</div>
+                <div className={`mt-2 text-xs px-2.5 py-1 rounded-lg font-medium ${plan.highlight ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600'}`}>
+                  👤 {plan.target}
+                </div>
               </div>
               <ul className="space-y-2.5 flex-1 mb-6">
                 {plan.features.map((f) => (
