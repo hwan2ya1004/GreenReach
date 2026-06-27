@@ -20,8 +20,8 @@ const features = [
   },
   {
     icon: <LayoutDashboard className="w-7 h-7 text-green-600" />,
-    title: '시군구 통계 대시보드',
-    desc: '시군구 단위 공원 수·면적·1인당 녹지 면적을 비교한 통계 대시보드로 지역 간 녹지 격차를 한눈에 확인합니다.',
+    title: 'B2B API 파트너 데모',
+    desc: '직방·다방·호갱노노 등 부동산 플랫폼에 녹지 접근성 점수 API를 연동하는 라이브 데모와 요금제를 확인하세요.',
   },
 ];
 
@@ -121,7 +121,7 @@ export default function Landing() {
                 className="inline-flex items-center justify-center gap-2 bg-green-700/50 border border-green-400/30 text-white font-semibold px-8 py-4 rounded-xl hover:bg-green-700 transition-colors text-lg"
               >
                 <LayoutDashboard className="w-5 h-5" />
-                시군구 대시보드
+                API 파트너 데모
               </Link>
             </div>
           </div>
